@@ -1,6 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, FolderOpen, Book, ArrowRight, Loader2, CheckCircle2, AlertCircle, Clock, Image as ImageIcon, X, Binary, AlertTriangle } from 'lucide-react';
+import { 
+  Plus, Trash2, FolderOpen, Book, ArrowRight, Loader2, CheckCircle2, 
+  AlertCircle, Clock, Image as ImageIcon, X, Binary, AlertTriangle,
+  MoreVertical, Calendar, FileText, Sparkles, Search, Command
+} from 'lucide-react';
 import Button from './ui/Button';
 
 // Constants
@@ -25,19 +29,30 @@ interface Notebook {
   image?: string; 
 }
 
+// Helper to generate consistent gradients from ID
+const getGradientFromId = (id: string) => {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+        hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hue1 = Math.abs(hash % 360);
+    const hue2 = (hue1 + 40) % 360;
+    return `linear-gradient(135deg, hsl(${hue1}, 70%, 15%) 0%, hsl(${hue2}, 60%, 10%) 100%)`;
+};
+
 const StatusBadge = ({ status }: { status: Status }) => {
   const styles = {
-    success: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    processing: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-    pending: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-    error: 'bg-red-500/10 text-red-400 border-red-500/20',
+    success: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.2)]',
+    processing: 'bg-blue-500/10 text-blue-400 border-blue-500/20 shadow-[0_0_10px_rgba(59,130,246,0.2)]',
+    pending: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+    error: 'bg-red-500/10 text-red-400 border-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.2)]',
   };
 
   const labels = {
-    success: 'Active',
+    success: 'Active Context',
     processing: 'Syncing',
     pending: 'Queued',
-    error: 'Error',
+    error: 'System Error',
   };
 
   const Icons = {
@@ -50,7 +65,7 @@ const StatusBadge = ({ status }: { status: Status }) => {
   const Icon = Icons[status];
 
   return (
-    <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] uppercase font-bold tracking-wider border backdrop-blur-md shadow-sm ${styles[status]}`}>
+    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] uppercase font-bold tracking-wider border backdrop-blur-md ${styles[status]}`}>
       <Icon className={`w-3 h-3 ${status === 'processing' ? 'animate-spin' : ''}`} />
       {labels[status]}
     </div>
@@ -71,34 +86,43 @@ const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({ isOpen, onClose
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in-up" onClick={onClose}>
-            <div className="bg-[#0A0A0F] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl flex flex-col relative overflow-hidden" onClick={e => e.stopPropagation()}>
-                <div className="p-6 border-b border-white/5 flex items-center gap-3 bg-red-500/5">
-                     <div className="p-2 rounded-lg bg-red-500/10 text-red-500">
-                        <Trash2 className="w-5 h-5" />
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+            <div className="bg-[#0A0A0F] border border-red-500/20 rounded-2xl w-full max-w-md shadow-[0_0_50px_rgba(239,68,68,0.1)] flex flex-col relative overflow-hidden animate-scale-in" onClick={e => e.stopPropagation()}>
+                {/* Background Accent */}
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-red-700"></div>
+                
+                <div className="p-6 pb-0 flex items-center gap-4">
+                     <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500 shrink-0">
+                        <Trash2 className="w-6 h-6" />
                      </div>
-                     <h2 className="text-lg font-bold text-white">Delete Notebook?</h2>
+                     <div>
+                         <h2 className="text-xl font-bold text-white">Delete Notebook</h2>
+                         <p className="text-sm text-red-400">Destructive Action</p>
+                     </div>
                 </div>
+
                 <div className="p-6">
                     <p className="text-text-subtle text-sm leading-relaxed">
-                        Are you sure you want to delete <span className="text-white font-bold">{notebookTitle}</span>? 
-                        This action will permanently remove all documents and history associated with this context.
+                        Are you sure you want to permanently delete <span className="text-white font-bold">"{notebookTitle}"</span>? 
+                        <br/><br/>
+                        This will remove all vectorized documents, chat history, and context associated with this notebook. This action cannot be undone.
                     </p>
                 </div>
-                <div className="p-6 border-t border-white/5 bg-surface/50 flex justify-end gap-3">
-                    <Button variant="outline" onClick={onClose} disabled={isDeleting} className="!h-9 text-xs border-white/10 hover:bg-white/5 text-text-subtle hover:text-white">Cancel</Button>
+
+                <div className="p-6 border-t border-white/5 bg-white/[0.02] flex justify-end gap-3">
+                    <Button variant="outline" onClick={onClose} disabled={isDeleting} className="!h-10 text-xs border-white/10 hover:bg-white/5 text-text-subtle hover:text-white">Cancel</Button>
                     <Button 
                         variant="primary" 
                         onClick={onConfirm} 
                         disabled={isDeleting}
-                        className="!h-9 text-xs bg-red-500 border-red-500 hover:bg-red-600 hover:border-red-600 text-white shadow-none"
+                        className="!h-10 text-xs bg-red-600 border-red-500 hover:bg-red-500 hover:border-red-400 text-white shadow-[0_0_20px_rgba(220,38,38,0.4)]"
                     >
                         {isDeleting ? (
                             <>
                                 <Loader2 className="w-3 h-3 mr-2 animate-spin" /> Deleting...
                             </>
                         ) : (
-                            "Delete Permanently"
+                            "Confirm Deletion"
                         )}
                     </Button>
                 </div>
@@ -131,7 +155,6 @@ const CreateModal: React.FC<CreateModalProps> = ({ isOpen, onClose, onCreate, is
     const [description, setDescription] = useState('');
     const [embeddingModel, setEmbeddingModel] = useState('');
 
-    // Reset form when modal opens
     useEffect(() => {
         if (isOpen) {
             setTitle('');
@@ -146,24 +169,26 @@ const CreateModal: React.FC<CreateModalProps> = ({ isOpen, onClose, onCreate, is
         e.preventDefault();
         if (title && embeddingModel) {
             await onCreate({ title, description, embeddingModel });
-            // Note: We don't close here, the parent handles closing on success.
         }
     };
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in-up">
-            <div className="bg-[#0A0A0F] border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden relative">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+            <div className="bg-[#0A0A0F] border border-white/10 rounded-3xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden relative animate-scale-in">
                 
                 {/* Header */}
-                <div className="p-6 border-b border-white/5 flex justify-between items-center bg-surface/50">
+                <div className="p-8 border-b border-white/5 flex justify-between items-start bg-white/[0.02]">
                     <div>
-                        <h2 className="text-xl font-bold text-white">Create New Notebook</h2>
-                        <p className="text-sm text-text-subtle">Configure your knowledge context.</p>
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="px-2 py-0.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-[10px] font-bold uppercase tracking-wider">New Context</span>
+                        </div>
+                        <h2 className="text-2xl font-bold text-white tracking-tight">Create Notebook</h2>
+                        <p className="text-sm text-text-subtle mt-1">Initialize a new knowledge base for your RAG pipeline.</p>
                     </div>
                     <button 
                         onClick={onClose} 
                         disabled={isLoading}
-                        className="p-2 rounded-lg hover:bg-white/5 text-text-subtle hover:text-white transition-colors disabled:opacity-50"
+                        className="p-2 rounded-full hover:bg-white/10 text-text-subtle hover:text-white transition-colors disabled:opacity-50"
                     >
                         <X className="w-5 h-5" />
                     </button>
@@ -174,18 +199,23 @@ const CreateModal: React.FC<CreateModalProps> = ({ isOpen, onClose, onCreate, is
                     <form onSubmit={handleSubmit} className="space-y-8">
                         
                         {/* General Info */}
-                        <div className="space-y-4">
+                        <div className="space-y-5">
                             <div className="space-y-2">
-                                <label className="text-xs font-bold text-text-subtle uppercase tracking-wider">Notebook Name <span className="text-primary">*</span></label>
-                                <input 
-                                    autoFocus
-                                    type="text" 
-                                    value={title}
-                                    onChange={(e) => setTitle(e.target.value)}
-                                    placeholder="e.g., Q4 Product Strategy"
-                                    disabled={isLoading}
-                                    className="w-full bg-surface border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary/50 focus:outline-none transition-colors text-sm font-medium placeholder-text-subtle/30 disabled:opacity-50"
-                                />
+                                <label className="text-xs font-bold text-text-subtle uppercase tracking-wider flex items-center gap-1">
+                                    Notebook Name <span className="text-primary">*</span>
+                                </label>
+                                <div className="relative group">
+                                    <div className="absolute inset-0 bg-primary/20 rounded-xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity pointer-events-none"></div>
+                                    <input 
+                                        autoFocus
+                                        type="text" 
+                                        value={title}
+                                        onChange={(e) => setTitle(e.target.value)}
+                                        placeholder="e.g., Q4 Product Strategy"
+                                        disabled={isLoading}
+                                        className="relative w-full bg-[#121216] border border-white/10 rounded-xl px-4 py-3.5 text-white focus:border-primary/50 focus:outline-none transition-all text-sm font-medium placeholder-text-subtle/30 shadow-inner"
+                                    />
+                                </div>
                             </div>
                             <div className="space-y-2">
                                 <label className="text-xs font-bold text-text-subtle uppercase tracking-wider">Description</label>
@@ -194,54 +224,75 @@ const CreateModal: React.FC<CreateModalProps> = ({ isOpen, onClose, onCreate, is
                                     onChange={(e) => setDescription(e.target.value)}
                                     placeholder="Briefly describe the documents and purpose of this notebook..."
                                     disabled={isLoading}
-                                    className="w-full bg-surface border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary/50 focus:outline-none transition-colors h-24 resize-none text-sm leading-relaxed placeholder-text-subtle/30 disabled:opacity-50"
+                                    className="w-full bg-[#121216] border border-white/10 rounded-xl px-4 py-3.5 text-white focus:border-primary/50 focus:outline-none transition-all h-28 resize-none text-sm leading-relaxed placeholder-text-subtle/30 shadow-inner"
                                 />
                             </div>
                         </div>
 
                         {/* Embedding Model Selection */}
                         <div className="space-y-4">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 pb-2 border-b border-white/5">
                                 <Binary className="w-4 h-4 text-indigo-400" />
                                 <label className="text-xs font-bold text-white uppercase tracking-wider">Embedding Model <span className="text-primary">*</span></label>
                             </div>
                             
-                            <p className="text-xs text-text-subtle bg-indigo-500/10 border border-indigo-500/20 p-3 rounded-lg">
-                                <span className="font-bold text-indigo-300">Important:</span> This selection is permanent. It determines how your documents are vectorized.
-                            </p>
-
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div 
                                     onClick={() => !isLoading && setEmbeddingModel('nomic-embed-text:latest')}
-                                    className={`cursor-pointer p-4 rounded-xl border-2 transition-all duration-200 flex items-start gap-3 
-                                        ${embeddingModel === 'nomic-embed-text:latest' ? 'bg-indigo-500/10 border-indigo-500' : 'bg-surface border-white/5 hover:border-white/20'}
+                                    className={`cursor-pointer p-4 rounded-2xl border-2 transition-all duration-200 flex items-start gap-4 relative overflow-hidden group
+                                        ${embeddingModel === 'nomic-embed-text:latest' ? 'bg-[#0E0E12] border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.15)]' : 'bg-surface border-white/5 hover:border-white/20 hover:bg-surface-highlight'}
                                         ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}
                                     `}
                                 >
-                                    <div className="w-10 h-10 rounded-lg bg-orange-500/10 flex items-center justify-center shrink-0">
-                                        <OllamaLogo className="w-6 h-6 text-orange-500" />
+                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border ${embeddingModel === 'nomic-embed-text:latest' ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' : 'bg-white/5 border-white/5 text-text-subtle'}`}>
+                                        <OllamaLogo className="w-6 h-6" />
                                     </div>
                                     <div>
                                         <div className={`text-sm font-bold mb-1 ${embeddingModel === 'nomic-embed-text:latest' ? 'text-white' : 'text-text-subtle'}`}>Nomic Embed</div>
-                                        <div className="text-[10px] text-text-subtle opacity-70 font-mono">nomic-embed-text:latest</div>
+                                        <div className="text-[10px] text-text-subtle opacity-70 font-mono mb-2">nomic-embed-text:latest</div>
+                                        <div className="flex gap-2">
+                                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 border border-white/5 text-text-subtle">768 dim</span>
+                                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 border border-white/5 text-text-subtle">Local</span>
+                                        </div>
                                     </div>
+                                    {embeddingModel === 'nomic-embed-text:latest' && (
+                                        <div className="absolute top-3 right-3 text-indigo-500">
+                                            <CheckCircle2 className="w-4 h-4" />
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div 
                                     onClick={() => !isLoading && setEmbeddingModel('text-embedding-3-small')}
-                                    className={`cursor-pointer p-4 rounded-xl border-2 transition-all duration-200 flex items-start gap-3 
-                                        ${embeddingModel === 'text-embedding-3-small' ? 'bg-indigo-500/10 border-indigo-500' : 'bg-surface border-white/5 hover:border-white/20'}
+                                    className={`cursor-pointer p-4 rounded-2xl border-2 transition-all duration-200 flex items-start gap-4 relative overflow-hidden group
+                                        ${embeddingModel === 'text-embedding-3-small' ? 'bg-[#0E0E12] border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.15)]' : 'bg-surface border-white/5 hover:border-white/20 hover:bg-surface-highlight'}
                                         ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}
                                     `}
                                 >
-                                    <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center shrink-0">
-                                        <OpenAILogo className="w-6 h-6 text-green-500" />
+                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border ${embeddingModel === 'text-embedding-3-small' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-white/5 border-white/5 text-text-subtle'}`}>
+                                        <OpenAILogo className="w-6 h-6" />
                                     </div>
                                     <div>
                                         <div className={`text-sm font-bold mb-1 ${embeddingModel === 'text-embedding-3-small' ? 'text-white' : 'text-text-subtle'}`}>OpenAI Small</div>
-                                        <div className="text-[10px] text-text-subtle opacity-70 font-mono">text-embedding-3-small</div>
+                                        <div className="text-[10px] text-text-subtle opacity-70 font-mono mb-2">text-embedding-3-small</div>
+                                        <div className="flex gap-2">
+                                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 border border-white/5 text-text-subtle">1536 dim</span>
+                                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 border border-white/5 text-text-subtle">Cloud</span>
+                                        </div>
                                     </div>
+                                    {embeddingModel === 'text-embedding-3-small' && (
+                                        <div className="absolute top-3 right-3 text-emerald-500">
+                                            <CheckCircle2 className="w-4 h-4" />
+                                        </div>
+                                    )}
                                 </div>
+                            </div>
+
+                            <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                                <p className="text-[11px] text-amber-200/70 leading-relaxed">
+                                    <strong className="text-amber-200">Important:</strong> The embedding model cannot be changed after creation. It determines how your documents are indexed and retrieved.
+                                </p>
                             </div>
                         </div>
 
@@ -249,12 +300,12 @@ const CreateModal: React.FC<CreateModalProps> = ({ isOpen, onClose, onCreate, is
                 </div>
 
                 {/* Footer */}
-                <div className="p-6 border-t border-white/5 bg-surface/50 flex justify-end gap-3">
+                <div className="p-6 border-t border-white/5 bg-white/[0.02] flex justify-end gap-3">
                     <Button 
                         variant="outline" 
                         onClick={onClose} 
                         disabled={isLoading}
-                        className="!h-10 border-white/10 hover:bg-white/5 text-text-subtle hover:text-white"
+                        className="!h-11 border-white/10 hover:bg-white/5 text-text-subtle hover:text-white rounded-xl"
                     >
                         Cancel
                     </Button>
@@ -262,12 +313,12 @@ const CreateModal: React.FC<CreateModalProps> = ({ isOpen, onClose, onCreate, is
                         variant="primary" 
                         onClick={handleSubmit}
                         disabled={!title || !embeddingModel || isLoading}
-                        className={`!h-10 shadow-none transition-opacity ${(!title || !embeddingModel) ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-neon-primary'}`}
+                        className={`!h-11 !px-6 rounded-xl shadow-none transition-all ${(!title || !embeddingModel) ? 'opacity-50 cursor-not-allowed' : 'shadow-neon-primary hover:-translate-y-0.5'}`}
                     >
                         {isLoading ? (
                             <>
                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Creating...
+                                Initializing...
                             </>
                         ) : (
                             "Create Notebook"
@@ -290,6 +341,7 @@ interface DocumentsPageProps {
 const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegisterEmbedding }) => {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   
   // Action States
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -321,9 +373,7 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
                 let data = [];
                 try {
                     const parsed = JSON.parse(text);
-                    // Handle n8n array wrapping or direct array
                     data = Array.isArray(parsed) ? parsed : (parsed.data || [parsed]);
-                    // If n8n returns [{json: {...}}] structure
                     if (data.length > 0 && data[0].json) {
                         data = data.map((item: any) => item.json);
                     }
@@ -334,28 +384,22 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
                 if (!isMounted) return;
 
                 const mappedNotebooks: Notebook[] = data.map((item: any) => {
-                    // Safe ID access to prevent crash
                     const nId = item.notebook_id ? String(item.notebook_id) : `unknown-${Math.random().toString(36).substr(2, 9)}`;
                     const nTitle = item.notebook_title || 'Untitled Notebook';
-
-                    // Use safe ID for split
-                    const idHash = nId.split('').reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0);
-                    const hue = (idHash * 137) % 360;
                     
                     return {
                         id: nId,
                         title: nTitle,
                         description: item.notebook_description,
                         docCount: item.number_of_documents || 0,
-                        status: 'success' as Status, // Defaulting to success as retrieved from DB
+                        status: 'success' as Status, 
                         lastUpdated: item.updated_at ? new Date(item.updated_at).toLocaleString(undefined, {
                             month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
                         }) : 'Unknown',
-                        image: `linear-gradient(${hue}deg, #0f0c29 0%, #302b63 100%)` 
+                        image: getGradientFromId(nId)
                     };
-                }).filter((n: Notebook) => n.id && !n.id.startsWith('unknown-')); // Filter out invalid items if necessary
+                }).filter((n: Notebook) => n.id && !n.id.startsWith('unknown-')); 
                 
-                // Sort by last updated desc
                 mappedNotebooks.sort((a, b) => {
                      const dateA = new Date(a.lastUpdated).getTime();
                      const dateB = new Date(b.lastUpdated).getTime();
@@ -393,7 +437,7 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
     try {
         const payload = { 
             notebook_id: id,
-            orchestrator_id: ORCHESTRATOR_ID // Include for consistency
+            orchestrator_id: ORCHESTRATOR_ID 
         };
 
         const response = await fetch(DELETE_NOTEBOOK_WEBHOOK_URL, {
@@ -402,12 +446,10 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
             body: JSON.stringify(payload)
         });
         
-        // Strict response check
         if (!response.ok) {
             throw new Error("Failed to delete");
         }
 
-        // Only update state after success
         setNotebooks(prev => prev.filter(n => n.id !== id));
         setNotebookToDelete(null); 
 
@@ -424,20 +466,16 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
          handleExecuteClear();
      } else {
          setConfirmClear(true);
-         // Reset confirmation if not clicked within 3 seconds
          setTimeout(() => setConfirmClear(false), 3000);
      }
   };
 
   const handleExecuteClear = async () => {
-    console.log("🚀 Executing Clear All...");
     setIsClearing(true);
     setConfirmClear(false);
     
     try {
-        // Construct payload strictly matching request requirements
         const payload = { orchestrator_id: ORCHESTRATOR_ID };
-        console.log("📤 Sending Payload:", payload);
 
         const response = await fetch(DELETE_ALL_NOTEBOOKS_WEBHOOK_URL, {
             method: 'POST',
@@ -445,18 +483,15 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
             body: JSON.stringify(payload)
         });
 
-        // Strict response check
         if (!response.ok) {
              const errorText = await response.text();
              throw new Error(`Server responded with ${response.status}: ${errorText}`);
         }
         
-        // Only update state after success
         setNotebooks([]);
-        console.log("✅ Successfully cleared all notebooks");
     } catch (error: any) {
-        console.error("❌ Failed to delete all notebooks:", error);
-        alert(`Failed to delete notebooks: ${error.message}. Please ensure the backend is reachable.`);
+        console.error("Failed to delete all notebooks:", error);
+        alert(`Failed to delete notebooks: ${error.message}`);
     } finally {
         setIsClearing(false);
     }
@@ -464,7 +499,6 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
 
   const handleCreate = async (data: { title: string; description: string; embeddingModel: string }) => {
     setIsCreating(true);
-    // Generate IDs
     const newId = crypto.randomUUID();
     const now = new Date().toISOString();
     
@@ -479,21 +513,16 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
             updated_at: now
         };
 
-        console.log("🚀 Syncing New Notebook to Database:", payload);
-
-        // Await confirmation
         const response = await fetch(CREATE_NOTEBOOK_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
 
-        // Strict check before UI update
         if (!response.ok) {
             throw new Error(`Server status: ${response.status}`);
         }
         
-        // Success: Update UI
         const newNotebook: Notebook = {
           id: newId,
           title: data.title,
@@ -501,12 +530,11 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
           docCount: 0,
           status: 'success',
           lastUpdated: 'Just now',
-          image: `linear-gradient(${Math.random() * 360}deg, #0f0c29 0%, #302b63 100%)`
+          image: getGradientFromId(newId)
         };
         
         setNotebooks([newNotebook, ...notebooks]);
         
-        // Register Embedding (App State)
         if (onRegisterEmbedding) {
             onRegisterEmbedding(newId, data.embeddingModel);
         }
@@ -514,27 +542,39 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
         setIsCreateModalOpen(false);
 
     } catch (error) {
-        console.error("❌ Failed to create notebook:", error);
+        console.error("Failed to create notebook:", error);
         alert("Failed to create notebook. Please ensure the backend is online.");
     } finally {
         setIsCreating(false);
     }
   };
 
+  const filteredNotebooks = notebooks.filter(n => 
+    n.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    n.id.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   if (isLoading) {
       return (
-          <div className="flex items-center justify-center h-full min-h-[500px]">
-              <div className="flex flex-col items-center gap-4">
-                  <Loader2 className="w-10 h-10 text-primary animate-spin" />
-                  <p className="text-text-subtle text-sm animate-pulse">Loading notebooks...</p>
+          <div className="flex items-center justify-center h-full min-h-[500px] w-full bg-[#050508]">
+              <div className="flex flex-col items-center gap-6 relative">
+                  <div className="absolute inset-0 bg-primary/20 blur-3xl rounded-full animate-pulse"></div>
+                  <div className="relative z-10 p-4 rounded-2xl bg-surface border border-white/5 shadow-2xl">
+                     <Loader2 className="w-10 h-10 text-primary animate-spin" />
+                  </div>
+                  <p className="text-text-subtle text-sm font-medium tracking-wide animate-pulse">Loading Contexts...</p>
               </div>
           </div>
       );
   }
 
   return (
-    <div className="p-8 md:p-12 max-w-7xl mx-auto min-h-full flex flex-col animate-fade-in-up">
+    <div className="flex flex-col h-full bg-[#050508] relative overflow-hidden animate-fade-in">
       
+      {/* Background Ambience */}
+      <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-b from-primary/5 via-transparent to-transparent pointer-events-none z-0"></div>
+      <div className="absolute top-[-20%] right-[-10%] w-[600px] h-[600px] bg-secondary/5 blur-[120px] rounded-full pointer-events-none z-0"></div>
+
       <CreateModal 
         isOpen={isCreateModalOpen} 
         onClose={() => !isCreating && setIsCreateModalOpen(false)} 
@@ -551,134 +591,168 @@ const DocumentsPage: React.FC<DocumentsPageProps> = ({ onOpenNotebook, onRegiste
       />
 
       {/* Header Section */}
-      <div className="relative z-20 flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12 border-b border-white/5 pb-8">
-        <div>
-          <h1 className="text-4xl font-display font-bold text-white tracking-tight mb-2">Notebooks</h1>
-          <p className="text-text-subtle text-lg">Manage your knowledge base contexts.</p>
+      <div className="p-8 md:p-12 pb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-6 relative z-10">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-bold uppercase tracking-wider text-text-subtle">
+                Orchestrator v2.0
+            </span>
+          </div>
+          <h1 className="text-4xl md:text-5xl font-black text-white tracking-tight font-display">
+            Notebooks
+          </h1>
+          <p className="text-text-subtle text-lg font-light max-w-xl">
+            Isolated RAG contexts for your documents, vector indices, and chat history.
+          </p>
         </div>
         
         <div className="flex gap-4">
-            <Button 
+             <Button 
                 variant="outline" 
                 onClick={handleClearClick}
                 disabled={isClearing || (notebooks.length === 0 && !isClearing)}
-                className={`!h-10 !px-4 !text-xs border-white/10 uppercase tracking-wider transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer
+                className={`!h-11 !px-5 !text-xs border-white/10 uppercase tracking-wider transition-all duration-300 backdrop-blur-md rounded-xl
                     ${confirmClear 
-                        ? 'bg-red-500 text-white border-red-500 hover:bg-red-600 hover:border-red-600 animate-pulse' 
-                        : 'hover:border-red-500/50 hover:text-red-400 hover:bg-red-500/5 text-text-subtle'
+                        ? 'bg-red-500/10 text-red-400 border-red-500/50 shadow-[0_0_20px_rgba(239,68,68,0.2)]' 
+                        : 'hover:border-red-500/30 hover:text-red-400 hover:bg-red-500/5 text-text-subtle'
                     }`}
             >
               {isClearing ? (
                   <>
-                    <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
-                    Clearing...
+                    <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> Clearing...
                   </>
               ) : confirmClear ? (
                   <>
-                    <AlertTriangle className="w-3.5 h-3.5 mr-2" />
-                    Confirm Delete?
+                    <AlertTriangle className="w-3.5 h-3.5 mr-2" /> Confirm?
                   </>
               ) : (
                   <>
-                    <Trash2 className="w-3.5 h-3.5 mr-2" />
-                    Clear All
+                    <Trash2 className="w-3.5 h-3.5 mr-2" /> Clear All
                   </>
               )}
             </Button>
             <Button 
                 variant="primary" 
                 onClick={() => setIsCreateModalOpen(true)}
-                className="!h-10 !px-5 shadow-neon-primary uppercase tracking-wider !text-xs cursor-pointer"
+                className="!h-11 !px-6 shadow-neon-primary uppercase tracking-wider !text-xs cursor-pointer rounded-xl flex items-center gap-2 hover:translate-y-[-2px] transition-transform"
             >
-              <Plus className="w-3.5 h-3.5 mr-2" />
-              New Notebook
+              <Plus className="w-4 h-4" /> New Notebook
             </Button>
         </div>
       </div>
 
-      {/* Grid */}
-      {notebooks.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center py-20 border border-dashed border-white/10 rounded-3xl bg-surface/20 text-center">
-                <div className="w-24 h-24 rounded-full bg-white/5 flex items-center justify-center mb-6 animate-pulse-slow">
-                    <FolderOpen className="w-10 h-10 text-text-subtle opacity-50" />
+      {/* Search Bar */}
+      <div className="px-8 md:px-12 pb-8 relative z-10">
+          <div className="relative max-w-md group">
+              <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full opacity-0 group-focus-within:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
+              <div className="relative flex items-center bg-[#0E0E12] border border-white/10 rounded-xl px-4 py-3 shadow-lg focus-within:border-primary/50 transition-colors">
+                  <Search className="w-4 h-4 text-text-subtle mr-3" />
+                  <input 
+                      type="text" 
+                      placeholder="Filter notebooks..." 
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="flex-1 bg-transparent border-none text-white text-sm focus:outline-none placeholder-text-subtle/50"
+                  />
+                  {searchQuery && (
+                      <button onClick={() => setSearchQuery('')} className="p-1 hover:bg-white/10 rounded-full text-text-subtle hover:text-white">
+                          <X className="w-3 h-3" />
+                      </button>
+                  )}
+              </div>
+          </div>
+      </div>
+
+      {/* Grid Content */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-8 md:px-12 pb-12 relative z-10">
+        {notebooks.length === 0 ? (
+            <div className="h-96 flex flex-col items-center justify-center border border-dashed border-white/10 rounded-3xl bg-surface/20 text-center animate-fade-in-up">
+                <div className="w-24 h-24 rounded-full bg-surface border border-white/5 flex items-center justify-center mb-6 shadow-2xl relative">
+                    <div className="absolute inset-0 bg-primary/10 blur-xl rounded-full animate-pulse-slow"></div>
+                    <FolderOpen className="w-10 h-10 text-text-subtle opacity-50 relative z-10" />
                 </div>
                 <h3 className="text-2xl font-bold text-white mb-2">No notebooks found</h3>
-                <p className="text-text-subtle mb-8 max-w-md">Get started by creating a new notebook to organize your documents.</p>
-                <Button variant="primary" onClick={() => setIsCreateModalOpen(true)}>Create Notebook</Button>
+                <p className="text-text-subtle mb-8 max-w-md">Initialize a new context to start ingesting documents and building your knowledge base.</p>
+                <Button variant="primary" onClick={() => setIsCreateModalOpen(true)} className="shadow-neon-primary rounded-xl">Create Notebook</Button>
             </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 relative z-10">
-            {notebooks.map((notebook) => (
-                <div 
-                key={notebook.id} 
-                onClick={() => onOpenNotebook && onOpenNotebook(notebook.id, notebook.title, notebook.description || '')}
-                className="group relative bg-surface border border-white/5 rounded-2xl overflow-hidden transition-all duration-500 hover:-translate-y-2 hover:shadow-[0_20px_40px_-10px_rgba(0,0,0,0.6)] cursor-pointer flex flex-col h-[280px]"
-                >
-                    {/* Hover Glow */}
-                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-b from-primary/5 to-transparent pointer-events-none z-0"></div>
-
-                    {/* Cover Image / Header Area */}
+        ) : filteredNotebooks.length === 0 ? (
+             <div className="h-64 flex flex-col items-center justify-center text-text-subtle border border-dashed border-white/10 rounded-3xl bg-surface/10">
+                 <Search className="w-10 h-10 mb-4 opacity-30" />
+                 <p>No notebooks match "{searchQuery}"</p>
+             </div>
+        ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {filteredNotebooks.map((notebook, idx) => (
                     <div 
-                        className="h-36 w-full relative bg-[#0A0A0F] overflow-hidden"
+                        key={notebook.id} 
+                        onClick={() => onOpenNotebook && onOpenNotebook(notebook.id, notebook.title, notebook.description || '')}
+                        className="group relative bg-[#0E0E12] border border-white/5 rounded-2xl overflow-hidden cursor-pointer flex flex-col h-[320px] transition-all duration-300 hover:border-white/10 hover:translate-y-[-4px] hover:shadow-[0_20px_40px_-10px_rgba(0,0,0,0.5)] animate-fade-in-up"
+                        style={{ animationDelay: `${idx * 0.05}s` }}
                     >
-                        {notebook.image ? (
-                             <div className="absolute inset-0" style={{ background: notebook.image }}></div>
-                        ) : (
-                            <div className="absolute inset-0 flex items-center justify-center bg-surface-highlight">
-                                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-white/5 to-transparent opacity-50"></div>
-                                <ImageIcon className="w-8 h-8 text-white/10" />
-                            </div>
-                        )}
-                        
-                        {/* Overlay Gradient */}
-                        <div className="absolute inset-0 bg-gradient-to-t from-surface via-surface/20 to-transparent opacity-90"></div>
-                        
-                        {/* Status Badge (Top Right) */}
-                        <div className="absolute top-4 right-4 z-10">
-                             <StatusBadge status={notebook.status} />
-                        </div>
-
-                        {/* Icon (Overlapping) */}
-                        <div className="absolute -bottom-6 left-6 z-10">
-                            <div className="w-12 h-12 rounded-2xl bg-surface border border-white/10 flex items-center justify-center text-primary shadow-xl group-hover:scale-110 group-hover:border-primary/40 group-hover:shadow-neon-primary transition-all duration-300">
-                                <Book className="w-6 h-6" />
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Content */}
-                    <div className="p-6 pt-8 flex-1 flex flex-col relative z-10">
-                        <div className="mb-4">
-                            <h3 className="text-lg font-bold text-white mb-1 truncate group-hover:text-primary transition-colors font-display">{notebook.title}</h3>
-                            <p className="text-[10px] text-text-subtle font-mono opacity-60 uppercase tracking-widest mb-1 truncate" title={notebook.id}>ID: {notebook.id}</p>
-                            {notebook.description && <p className="text-xs text-text-subtle line-clamp-1">{notebook.description}</p>}
-                        </div>
-
-                        {/* Metrics Footer */}
-                        <div className="mt-auto flex justify-between items-end pt-4 border-t border-white/5 group-hover:border-white/10 transition-colors">
-                            <div className="flex flex-col">
-                                <span className="block text-[10px] text-text-subtle uppercase tracking-wider font-bold mb-1">Documents</span>
-                                <span className="text-lg font-bold text-white font-mono">{notebook.docCount}</span>
-                            </div>
+                        {/* Gradient Cover */}
+                        <div 
+                            className="h-32 w-full relative overflow-hidden"
+                            style={{ background: notebook.image }}
+                        >
+                            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150 mix-blend-overlay"></div>
+                            <div className="absolute inset-0 bg-gradient-to-t from-[#0E0E12] via-[#0E0E12]/40 to-transparent"></div>
                             
-                            <div className="flex items-center gap-2">
-                                <button 
-                                    onClick={(e) => handleRequestDelete(notebook, e)}
-                                    title="Delete Notebook"
-                                    className="w-8 h-8 rounded-lg flex items-center justify-center text-text-subtle hover:text-white hover:bg-red-500/80 transition-all opacity-0 group-hover:opacity-100"
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                </button>
-                                <div className="w-8 h-8 rounded-lg bg-surface border border-white/5 flex items-center justify-center text-text-subtle group-hover:text-white group-hover:border-white/20 transition-all">
-                                    <ArrowRight className="w-4 h-4" />
+                            {/* Status Badge */}
+                            <div className="absolute top-4 right-4 z-10">
+                                <StatusBadge status={notebook.status} />
+                            </div>
+
+                             {/* Floating Icon */}
+                             <div className="absolute -bottom-6 left-6 z-10">
+                                <div className="w-12 h-12 rounded-xl bg-[#0E0E12] border border-white/10 flex items-center justify-center text-white shadow-xl group-hover:scale-110 group-hover:border-primary/40 group-hover:shadow-[0_0_20px_rgba(126,249,255,0.2)] transition-all duration-300">
+                                    <Book className="w-6 h-6 group-hover:text-primary transition-colors" />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Content */}
+                        <div className="p-6 pt-8 flex-1 flex flex-col">
+                            <div className="mb-4">
+                                <h3 className="text-lg font-bold text-white mb-1 truncate group-hover:text-primary transition-colors">{notebook.title}</h3>
+                                <div className="flex items-center gap-2 mb-2">
+                                     <span className="text-[10px] text-text-subtle font-mono bg-white/5 px-1.5 py-0.5 rounded border border-white/5 truncate max-w-[120px]" title={notebook.id}>
+                                         {notebook.id}
+                                     </span>
+                                </div>
+                                <p className="text-xs text-text-subtle line-clamp-2 leading-relaxed h-8">
+                                    {notebook.description || <span className="italic opacity-50">No description provided.</span>}
+                                </p>
+                            </div>
+
+                            {/* Footer */}
+                            <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between group-hover:border-white/10 transition-colors">
+                                <div className="flex flex-col">
+                                    <span className="text-[10px] text-text-subtle uppercase tracking-wider font-bold mb-0.5">Documents</span>
+                                    <div className="flex items-center gap-1.5">
+                                        <FileText className="w-3.5 h-3.5 text-text-subtle" />
+                                        <span className="text-sm font-bold text-white font-mono">{notebook.docCount}</span>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                    <button 
+                                        onClick={(e) => handleRequestDelete(notebook, e)}
+                                        title="Delete Notebook"
+                                        className="w-8 h-8 rounded-lg flex items-center justify-center text-text-subtle hover:text-white hover:bg-red-500/10 hover:border hover:border-red-500/20 transition-all opacity-0 group-hover:opacity-100"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                    <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/5 flex items-center justify-center text-text-subtle group-hover:text-white group-hover:bg-primary/10 group-hover:border-primary/20 group-hover:text-primary transition-all">
+                                        <ArrowRight className="w-4 h-4" />
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            ))}
-        </div>
-      )}
+                ))}
+            </div>
+        )}
+      </div>
     </div>
   );
 };

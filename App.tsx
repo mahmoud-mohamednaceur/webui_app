@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect } from 'react';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
@@ -16,6 +14,7 @@ import PlaygroundChart from './components/workspace/PlaygroundChart';
 import NotebookChat from './components/workspace/NotebookChat';
 import NotebookSettings from './components/workspace/NotebookSettings';
 import NotebookEmbeddingSetup from './components/workspace/NotebookEmbeddingSetup';
+import { Loader2 } from 'lucide-react';
 
 type AppMode = 'global' | 'workspace';
 
@@ -406,6 +405,7 @@ const App: React.FC = () => {
   const [appMode, setAppMode] = useState<AppMode>('global');
   const [activeGlobalPage, setActiveGlobalPage] = useState<GlobalPage>('dashboard');
   const [activeWorkspacePage, setActiveWorkspacePage] = useState<WorkspacePage>('home');
+  const [isConfigLoading, setIsConfigLoading] = useState(false);
   
   // Selection State
   const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(null);
@@ -438,6 +438,7 @@ const App: React.FC = () => {
           system_prompt_dataset: config.systemPrompts.dataset,
           inference_provider: config.inference.provider,
           inference_model: config.inference.model,
+          embedding_model: config.embeddingModel,
           inference_temperature: config.inference.temperature,
           active_strategy_id: config.activeStrategyId,
           strategies_config: config.strategies
@@ -453,6 +454,63 @@ const App: React.FC = () => {
           });
       } catch (error) {
           console.warn("Failed to sync initial settings to webhook:", error);
+      }
+  };
+
+  // Helper to fetch remote settings and update config
+  const fetchRemoteConfig = async (notebookId: string) => {
+      try {
+          const response = await fetch('https://n8nserver.sportnavi.de/webhook/e64ae3ac-0d81-4303-be26-d18fd2d1faf6-get-current-notebook-settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ notebook_id: notebookId })
+          });
+
+          if (response.ok) {
+              const text = await response.text();
+              if (!text) return;
+              
+              let data;
+              try {
+                  const json = JSON.parse(text);
+                  data = Array.isArray(json) ? json[0] : json;
+              } catch (e) {
+                  return;
+              }
+
+              if (data) {
+                 setNotebookConfigs(prev => {
+                     const existing = prev[notebookId] || {
+                         embeddingModel: '',
+                         systemPrompts: DEFAULT_SYSTEM_PROMPTS,
+                         inference: { provider: 'openai', model: 'gpt-4o-mini', temperature: 0.0 },
+                         strategies: JSON.parse(JSON.stringify(DEFAULT_STRATEGIES_CONFIG)),
+                         activeStrategyId: 'fusion'
+                     };
+
+                     return {
+                         ...prev,
+                         [notebookId]: {
+                             ...existing,
+                             embeddingModel: data.embedding_model || existing.embeddingModel,
+                             systemPrompts: {
+                                 retrieval: data.system_prompt_retrieval || existing.systemPrompts.retrieval,
+                                 dataset: data.system_prompt_dataset || existing.systemPrompts.dataset
+                             },
+                             inference: {
+                                 provider: data.inference_provider || existing.inference.provider,
+                                 model: data.inference_model || existing.inference.model,
+                                 temperature: data.inference_temperature !== undefined ? Number(data.inference_temperature) : existing.inference.temperature
+                             },
+                             activeStrategyId: data.active_strategy_id || existing.activeStrategyId,
+                             strategies: data.strategies_config || existing.strategies
+                         }
+                     };
+                 });
+              }
+          }
+      } catch (e) {
+          console.error("Failed to fetch remote config", e);
       }
   };
 
@@ -517,16 +575,24 @@ const App: React.FC = () => {
     window.scrollTo(0, 0);
   };
 
-  const handleOpenNotebook = (id: string, name: string, description: string = '') => {
-    setSelectedNotebookId(id);
-    setSelectedNotebookName(name);
-    setSelectedNotebookDescription(description);
-    
-    // Ensure configuration exists
-    ensureNotebookConfig(id);
+  const handleOpenNotebook = async (id: string, name: string, description: string = '') => {
+    setIsConfigLoading(true);
+    try {
+        setSelectedNotebookId(id);
+        setSelectedNotebookName(name);
+        setSelectedNotebookDescription(description);
+        
+        // Ensure configuration exists with defaults first
+        ensureNotebookConfig(id);
 
-    setAppMode('workspace');
-    setActiveWorkspacePage('home');
+        // Fetch remote config to ensure we have the embedding model if it exists
+        await fetchRemoteConfig(id);
+
+        setAppMode('workspace');
+        setActiveWorkspacePage('home');
+    } finally {
+        setIsConfigLoading(false);
+    }
   };
 
   const handleBackToGlobal = () => {
@@ -577,6 +643,17 @@ const App: React.FC = () => {
       }
   };
 
+  if (isConfigLoading) {
+      return (
+        <div className="min-h-screen bg-background flex items-center justify-center">
+             <div className="flex flex-col items-center gap-4">
+                 <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                 <p className="text-text-subtle animate-pulse">Loading configuration...</p>
+             </div>
+        </div>
+      );
+  }
+
   if (currentView === 'app') {
     // Determine if we need to show the setup page
     // We check if the config exists AND if embeddingModel is set
@@ -616,7 +693,12 @@ const App: React.FC = () => {
             {/* Global Pages */}
             {!needsSetup && appMode === 'global' && (
                 <>
-                    {activeGlobalPage === 'dashboard' && <DashboardPage onOpenNotebook={handleOpenNotebook} />}
+                    {activeGlobalPage === 'dashboard' && (
+                        <DashboardPage 
+                            onOpenNotebook={handleOpenNotebook} 
+                            onRegisterEmbedding={handleRegisterEmbedding}
+                        />
+                    )}
                     {activeGlobalPage === 'notebooks' && (
                         <DocumentsPage 
                             onOpenNotebook={handleOpenNotebook} 
@@ -641,6 +723,7 @@ const App: React.FC = () => {
                         <NotebookDashboard 
                             notebookId={selectedNotebookId} 
                             notebookName={selectedNotebookName} 
+                            notebookDescription={selectedNotebookDescription}
                             onNavigate={(page) => setActiveWorkspacePage(page)}
                         />
                     )}
@@ -670,6 +753,7 @@ const App: React.FC = () => {
                     {activeWorkspacePage === 'chart' && <PlaygroundChart />}
                     {activeWorkspacePage === 'settings' && (
                         <NotebookSettings 
+                            key={selectedNotebookId}
                             notebookId={selectedNotebookId}
                             notebookName={selectedNotebookName}
                             config={currentConfig}

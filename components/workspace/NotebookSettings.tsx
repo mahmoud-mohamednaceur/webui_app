@@ -69,11 +69,17 @@ const NotebookSettings: React.FC<NotebookSettingsProps> = ({ notebookId, noteboo
       let isMounted = true;
 
       const fetchSettings = async () => {
+          if (!notebookId) {
+             console.warn("Skipping settings fetch: No notebookId provided");
+             setIsLoadingSettings(false);
+             return;
+          }
+
           setIsLoadingSettings(true);
           console.log(`📥 Fetching settings for notebook: ${notebookId}`);
           
           try {
-              // Use POST with notebook_id for n8n compatibility (often easier than GET params)
+              // Use POST with notebook_id for n8n compatibility
               const response = await fetch('https://n8nserver.sportnavi.de/webhook/e64ae3ac-0d81-4303-be26-d18fd2d1faf6-get-current-notebook-settings', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -90,7 +96,6 @@ const NotebookSettings: React.FC<NotebookSettingsProps> = ({ notebookId, noteboo
                   return; 
               }
 
-              // Handle n8n returning array or single object
               let data;
               try {
                   const json = JSON.parse(text);
@@ -106,6 +111,11 @@ const NotebookSettings: React.FC<NotebookSettingsProps> = ({ notebookId, noteboo
 
               // Map DB/Webhook response format back to Frontend Config format
               const newConfig: Partial<NotebookConfig> = {};
+
+              // Sync embedding_model from backend
+              if (data.embedding_model) {
+                  newConfig.embeddingModel = data.embedding_model;
+              }
 
               // 1. System Prompts
               if (data.system_prompt_retrieval || data.system_prompt_dataset) {
@@ -141,7 +151,6 @@ const NotebookSettings: React.FC<NotebookSettingsProps> = ({ notebookId, noteboo
 
           } catch (error) {
               console.error("❌ Failed to load remote settings:", error);
-              // Non-blocking error (allows offline/cached usage)
           } finally {
               if (isMounted) setIsLoadingSettings(false);
           }
@@ -198,13 +207,14 @@ const NotebookSettings: React.FC<NotebookSettingsProps> = ({ notebookId, noteboo
       });
 
       // Payload mapping to DB Schema (notebook_settings)
+      // Must include embedding_model from current config (which is synced from DB on mount)
       const payload = {
           notebook_id: notebookId,
-          embedding_model: config.embeddingModel, // Included here
           system_prompt_retrieval: config.systemPrompts.retrieval,
           system_prompt_dataset: config.systemPrompts.dataset,
           inference_provider: config.inference.provider,
           inference_model: config.inference.model,
+          embedding_model: config.embeddingModel,
           inference_temperature: config.inference.temperature,
           active_strategy_id: config.activeStrategyId,
           strategies_config: strategiesConfig
@@ -265,7 +275,7 @@ const NotebookSettings: React.FC<NotebookSettingsProps> = ({ notebookId, noteboo
                 <Button 
                     variant="primary" 
                     onClick={handleSave} 
-                    disabled={isSaving}
+                    disabled={isSaving || isLoadingSettings}
                     className="!h-12 !px-8 flex items-center gap-2 shadow-neon-primary disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     {isSaving ? (

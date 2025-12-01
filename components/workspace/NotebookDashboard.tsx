@@ -1,16 +1,18 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Activity, MessageSquare, FileText, Search, Database, Settings, Edit2, Save, X, Camera, ImageIcon, ExternalLink, Sparkles, Loader2 } from 'lucide-react';
 import { WorkspacePage } from '../Sidebar';
 import Button from '../ui/Button';
 
 // Constants
 const UPDATE_NOTEBOOK_WEBHOOK_URL = 'https://n8nserver.sportnavi.de/webhook/22e943ae-6bc7-43b3-9ca4-16bdc715a84b-update-notebook-information';
+const NOTEBOOK_DETAILS_WEBHOOK_URL = 'https://n8nserver.sportnavi.de/webhook/22e943ae-6bc7-43b3-9ca4-16bdc715a84b-get-notebook-details-information';
 const ORCHESTRATOR_ID = '301f7482-1430-466d-9721-396564618751';
 
 interface NotebookDashboardProps {
   notebookId: string;
   notebookName: string;
+  notebookDescription: string;
   onNavigate: (page: WorkspacePage) => void;
 }
 
@@ -58,15 +60,105 @@ const ActionCard = ({
     </div>
 );
 
-const NotebookDashboard: React.FC<NotebookDashboardProps> = ({ notebookId, notebookName, onNavigate }) => {
+const NotebookDashboard: React.FC<NotebookDashboardProps> = ({ notebookId, notebookName, notebookDescription, onNavigate }) => {
   // Local state for the "General Configuration" features directly on dashboard
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(notebookName);
-  const [description, setDescription] = useState("Manage documents, interact with the RAG agent, and tune retrieval parameters.");
+  const [description, setDescription] = useState(notebookDescription || "Manage documents, interact with the RAG agent, and tune retrieval parameters.");
   const [coverImage, setCoverImage] = useState<string | null>(null);
   const [coverImageBase64, setCoverImageBase64] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [lastSynced, setLastSynced] = useState("2 mins ago");
+
+  // Real data state
+  const [status, setStatus] = useState<'checking' | 'online' | 'syncing' | 'error'>('checking');
+  const [lastActivity, setLastActivity] = useState<string>('Checking...');
+  const [docCount, setDocCount] = useState<number | null>(null);
+
+  // Poll for status
+  useEffect(() => {
+    let isMounted = true;
+    const fetchStatus = async () => {
+        try {
+            const response = await fetch(NOTEBOOK_DETAILS_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    notebook_id: notebookId,
+                    orchestrator_id: ORCHESTRATOR_ID 
+                })
+            });
+            
+            if (response.ok && isMounted) {
+                const raw = await response.json();
+                
+                // Handle n8n wrapping
+                let data = Array.isArray(raw) ? raw[0] : raw;
+                if (data.json) data = data.json;
+
+                // Expected format:
+                // {
+                //   "notebook_id": "...",
+                //   "notebook_title": "...",
+                //   "total_files": 10,
+                //   "success_count": 6,
+                //   "error_count": 1,
+                //   "processing_count": 2,
+                //   "pending_count": 1,
+                //   "is_finished": false
+                // }
+
+                setDocCount(data.total_files || 0);
+
+                // Determine Status
+                const pending = data.pending_count || 0;
+                const processing = data.processing_count || 0;
+                const errors = data.error_count || 0;
+                const isFinished = data.is_finished; 
+
+                if (processing > 0 || pending > 0 || isFinished === false) {
+                     setStatus('syncing');
+                } else if (errors > 0 && (data.success_count || 0) === 0) {
+                     setStatus('error');
+                } else {
+                     setStatus('online');
+                }
+
+                // Determine Last Activity
+                // If updated_at is provided, calculate time. Otherwise default to "Active".
+                if (data.updated_at) {
+                     const lastUpdate = new Date(data.updated_at);
+                     if (!isNaN(lastUpdate.getTime())) {
+                        const now = new Date();
+                        const diffMs = now.getTime() - lastUpdate.getTime();
+                        const diffMins = Math.floor(diffMs / 60000);
+                        const diffHours = Math.floor(diffMins / 60);
+                        const diffDays = Math.floor(diffHours / 24);
+
+                        if (diffMins < 1) setLastActivity('Just now');
+                        else if (diffMins < 60) setLastActivity(`${diffMins} mins ago`);
+                        else if (diffHours < 24) setLastActivity(`${diffHours} hours ago`);
+                        else setLastActivity(`${diffDays} days ago`);
+                     } else {
+                         setLastActivity('Active');
+                     }
+                } else {
+                     setLastActivity('Active');
+                }
+            }
+        } catch (e) {
+            console.error("Failed to fetch dashboard stats", e);
+            if (isMounted) setStatus('error');
+        }
+    };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 5000);
+    return () => { 
+        isMounted = false; 
+        clearInterval(interval);
+    };
+  }, [notebookId]);
+
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files[0]) {
@@ -106,8 +198,6 @@ const NotebookDashboard: React.FC<NotebookDashboardProps> = ({ notebookId, noteb
           }
 
           setIsEditing(false);
-          // Ideally, we'd also update the last synced time here
-          setLastSynced("Just now");
       } catch (error) {
           console.error("Failed to update notebook:", error);
           alert("Failed to save changes. Please try again.");
@@ -155,11 +245,41 @@ const NotebookDashboard: React.FC<NotebookDashboardProps> = ({ notebookId, noteb
                         <Database className="w-3 h-3" />
                         <span>ID: {notebookId}</span>
                         <span className="w-px h-3 bg-white/10"></span>
-                        <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                        </span>
-                        <span className="text-emerald-400 font-bold">Online</span>
+                        
+                        {status === 'checking' && (
+                            <span className="flex items-center gap-1.5 text-text-subtle">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Checking...
+                            </span>
+                        )}
+                        {status === 'online' && (
+                             <div className="flex items-center gap-1.5">
+                                <span className="relative flex h-2 w-2">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                </span>
+                                <span className="text-emerald-400 font-bold">Online</span>
+                             </div>
+                        )}
+                        {status === 'syncing' && (
+                            <div className="flex items-center gap-1.5">
+                                <Loader2 className="w-3 h-3 animate-spin text-blue-400" />
+                                <span className="text-blue-400 font-bold">Syncing</span>
+                            </div>
+                        )}
+                         {status === 'error' && (
+                            <div className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                                <span className="text-red-400 font-bold">Error</span>
+                            </div>
+                        )}
+
+                        {docCount !== null && (
+                            <>
+                                <span className="w-px h-3 bg-white/10 ml-2"></span>
+                                <span className="text-white font-bold ml-2">{docCount} Docs</span>
+                            </>
+                        )}
                     </div>
 
                   {isEditing ? (
@@ -226,11 +346,23 @@ const NotebookDashboard: React.FC<NotebookDashboardProps> = ({ notebookId, noteb
                         <Activity className="w-3 h-3 text-primary" />
                         Last Activity
                      </div>
-                     <div className="text-2xl font-bold text-white font-mono">{lastSynced}</div>
-                     <div className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
-                         <Sparkles className="w-3 h-3" />
-                         <span>System Healthy</span>
-                     </div>
+                     <div className="text-2xl font-bold text-white font-mono">{lastActivity}</div>
+                     
+                     {status === 'online' ? (
+                        <div className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
+                            <Sparkles className="w-3 h-3" />
+                            <span>System Healthy</span>
+                        </div>
+                     ) : status === 'syncing' ? (
+                        <div className="text-xs text-blue-400 mt-1 flex items-center gap-1">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            <span>Processing Data</span>
+                        </div>
+                     ) : status === 'checking' ? (
+                         <div className="text-xs text-text-subtle mt-1">Connecting...</div>
+                     ) : (
+                        <div className="text-xs text-red-400 mt-1">Connection Issue</div>
+                     )}
                  </div>
               )}
           </div>

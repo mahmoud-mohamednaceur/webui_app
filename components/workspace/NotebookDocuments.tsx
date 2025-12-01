@@ -1,6 +1,14 @@
 
-import React, { useState, useRef, useEffect } from 'react';
-import { FileText, CheckCircle2, Loader2, Clock, AlertCircle, MoreVertical, Search, Plus, UploadCloud, HardDrive, Type, ArrowLeft, Share2, Folder, RefreshCw, Copy, Check, File as FileIcon, LayoutGrid, List as ListIcon, Globe, Shield, Settings, Cpu, Database, ScanLine, FileCode, Layers, ArrowRight, Code, AlertTriangle, Terminal, Sparkles, BrainCircuit, Zap, FolderOpen } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { 
+    FileText, CheckCircle2, Loader2, Clock, AlertCircle, 
+    Search, Plus, RefreshCw, File as FileIcon, 
+    LayoutGrid, List as ListIcon, Database, ArrowRight, Trash2, FolderOpen,
+    X, Cloud, Server, Upload, CheckSquare, Square, Share2, Settings2, FileUp, ChevronRight,
+    ScanText, Sparkles, Zap, Brain, Code, FileType, HardDrive, Info, Scissors, Maximize, Minimize, Layers, Link, Sliders,
+    ArrowLeft, Activity, Table, Calendar, Check, Cpu, AlertTriangle, Terminal, ShieldAlert
+} from 'lucide-react';
 import Button from '../ui/Button';
 import type { NotebookConfig } from '../../App';
 
@@ -11,73 +19,951 @@ const SHAREPOINT_DISCOVERY_WEBHOOK_URL = 'https://n8nserver.sportnavi.de/webhook
 const INGESTION_WEBHOOK_URL = 'https://n8nserver.sportnavi.de/webhook/b65632eb-86bc-4cf6-8586-5980beaa3282-share-point-files-ingestion';
 // Webhook for retrieving notebook status and files
 const NOTEBOOK_STATUS_WEBHOOK_URL = 'https://n8nserver.sportnavi.de/webhook/a34aa1cf-d399-4120-a2b6-4e47ca21805b-notebook-status';
+// Webhook for deleting a file
+const DELETE_FILE_WEBHOOK_URL = 'https://n8nserver.sportnavi.de/webhook/22e943ae-6bc7-43b3-9ca4-16bdc715a84b-delete-file-from-notebook';
+// Webhook for file ingestion details
+const INGESTION_SETTINGS_WEBHOOK_URL = 'https://n8nserver.sportnavi.de/webhook/22e943ae-6bc7-43b3-9ca4-16bdc715a84b-file-ingestion-settings';
+// Webhook for contextual retrieval state (Real-time table)
+const CONTEXTUAL_RETRIEVAL_STATE_WEBHOOK_URL = 'https://n8nserver.sportnavi.de/webhook/22e943ae-6bc7-43b3-9ca4-16bdc715a84b-file-contextual-retireval-state';
+// Webhook for real-time workflow stage
+const WORKFLOW_STAGE_WEBHOOK_URL = 'https://n8nserver.sportnavi.de/webhook/22e943ae-6bc7-43b3-9ca4-16bdc715a84b-get-workflow-stage';
+// Webhook for file error details
+const ERROR_DETAILS_WEBHOOK_URL = 'https://n8nserver.sportnavi.de/webhook/22e943ae-6bc7-43b3-9ca4-16bdc715a84b-files-error-and-details';
+
+const ORCHESTRATOR_ID = '301f7482-1430-466d-9721-396564618751';
 
 // Types
 type Status = 'success' | 'processing' | 'pending' | 'error';
 
+interface IngestionConfig {
+    method?: string;
+    parser?: string;
+    chunking?: string;
+    chunkSize?: number;
+    overlap?: number;
+    augmentation?: boolean;
+    destination?: string;
+}
+
 interface Document {
-    id: string;
-    name: string;
+    id: string; // job_id
+    jobId?: string; // job_id (original source id)
+    fileId?: string; // file_id
+    name: string; // file_name
     type: string;
     status: 'completed' | 'processing' | 'pending' | 'error';
     size: string;
-    added: string;
+    added: string; // created_at
+    updated?: string; // updated_at
+    error?: string; // error_description
+    retryCount?: number; // retry_count
+    ingestionConfig?: IngestionConfig;
 }
 
-const StatusBadge = ({ status }: { status: Document['status'] }) => {
-    const config = {
-        completed: { icon: CheckCircle2, color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/20' },
-        processing: { icon: Loader2, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-400/20' },
-        pending: { icon: Clock, color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-400/20' },
-        error: { icon: AlertCircle, color: 'text-red-400', bg: 'bg-red-400/10', border: 'border-red-400/20' },
+interface SharePointFile {
+    id: string;
+    name: string;
+    webUrl?: string;
+    size?: string;
+    lastModified?: string;
+    type?: string;
+    mimeType?: string;
+}
+
+interface LocalFile extends File {
+    id?: string;
+}
+
+interface ContextualChunk {
+    chunk_id: string;
+    job_id: string;
+    file_id: string;
+    file_name: string;
+    original_chunk: string;
+    enhanced_chunk: string;
+    status: string;
+    retry_count: number;
+    notebook_id: string;
+    created_at: string;
+    updated_at: string;
+}
+
+const StatusBadge = ({ status, error }: { status: Document['status'] | string, error?: string }) => {
+    // Use the actual status text if available, fallback to Pending
+    const rawStatus = status || 'Pending';
+    const s = rawStatus.toLowerCase();
+    
+    // Default styling (Unknown/Pending)
+    let config = { 
+        icon: Clock, 
+        color: 'text-amber-400', 
+        bg: 'bg-amber-400/10', 
+        border: 'border-amber-400/20' 
     };
-    const { icon: Icon, color, bg, border } = config[status];
+
+    // Determine style based on keywords found in the status string
+    if (['completed', 'success', 'finished', 'done', 'active', 'ready'].some(k => s.includes(k))) {
+        config = { 
+            icon: CheckCircle2, 
+            color: 'text-emerald-400', 
+            bg: 'bg-emerald-400/10', 
+            border: 'border-emerald-400/20' 
+        };
+    } else if (['processing', 'running', 'ingesting', 'syncing', 'in_progress', 'generating', 'enriching', 'chunking', 'embedding'].some(k => s.includes(k))) {
+        config = { 
+            icon: Loader2, 
+            color: 'text-blue-400', 
+            bg: 'bg-blue-400/10', 
+            border: 'border-blue-400/20' 
+        };
+    } else if (['error', 'failed', 'failure'].some(k => s.includes(k))) {
+        config = { 
+            icon: AlertCircle, 
+            color: 'text-red-400', 
+            bg: 'bg-red-400/10', 
+            border: 'border-red-400/20' 
+        };
+    }
+
+    const { icon: Icon, color, bg, border } = config;
+    const isSpinning = ['processing', 'running', 'ingesting', 'syncing', 'enriching', 'generating', 'chunking', 'embedding', 'in_progress'].some(k => s.includes(k));
 
     return (
-        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] uppercase font-bold tracking-wider ${color} ${bg} border ${border} shadow-sm`}>
-            <Icon className={`w-3 h-3 ${status === 'processing' ? 'animate-spin' : ''}`} />
-            {status}
-        </span>
+        <div className="group relative">
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] uppercase font-bold tracking-wider ${color} ${bg} border ${border} shadow-sm transition-all duration-300`}>
+                <Icon className={`w-3 h-3 ${isSpinning ? 'animate-spin' : ''}`} />
+                {rawStatus}
+            </span>
+        </div>
     );
 };
 
-// --- Ingestion Configuration Types ---
+// --- HELPER COMPONENTS ---
 
-type ParserType = 'llamaindex' | 'mistral_ocr' | 'n8n_basic' | 'docling' | 'gemini_ocr';
-type ChunkerType = 'code_node' | 'agentic' | 'docling';
-type DestinationType = 'qdrant' | 'postgres' | 'pinecone';
+const SelectionCard = ({ 
+    icon: Icon, 
+    title, 
+    description, 
+    selected, 
+    onClick, 
+    disabled, 
+    badge 
+}: any) => (
+    <div 
+        onClick={() => !disabled && onClick()}
+        className={`relative p-5 rounded-xl border transition-all duration-200 flex flex-col gap-3 text-left h-full
+            ${disabled ? 'opacity-50 cursor-not-allowed bg-surface/20 border-white/5' : 'cursor-pointer'}
+            ${selected && !disabled 
+                ? 'bg-primary/5 border-primary shadow-[0_0_15px_rgba(126,249,255,0.1)]' 
+                : !disabled ? 'bg-surface border-white/10 hover:border-white/20 hover:bg-surface-highlight' : ''}
+        `}
+    >
+        {selected && !disabled && (
+            <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-primary text-black flex items-center justify-center shadow-lg">
+                <CheckCircle2 className="w-3 h-3" />
+            </div>
+        )}
+        
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center border
+            ${selected && !disabled ? 'bg-primary/20 border-primary/20 text-primary' : 'bg-white/5 border-white/5 text-text-subtle'}
+        `}>
+            <Icon className="w-5 h-5" />
+        </div>
+        
+        <div>
+            <h4 className={`text-sm font-bold mb-1.5 ${selected ? 'text-white' : 'text-gray-200'}`}>{title}</h4>
+            <p className="text-[11px] text-text-subtle leading-relaxed">{description}</p>
+        </div>
 
-interface IngestionConfig {
-    parser: ParserType;
-    chunker: ChunkerType;
-    contextAugmentation: boolean; // New Flag
-    destination: DestinationType;
-    
-    // Recursive Text Splitter (Code Node) Params
-    chunkSize: number;
-    chunkOverlap: number;
-    separators: string[];
+        {badge && (
+            <div className="mt-auto pt-3">
+                 <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-white/5 border border-white/5 w-fit">
+                    <AlertCircle className="w-3 h-3 text-text-subtle" />
+                    <span className="text-[9px] text-text-subtle">{badge}</span>
+                </div>
+            </div>
+        )}
+    </div>
+);
 
-    // Agentic Chunking Params
-    agenticModel: string;
-    splitInstructions: string;
-    minChunkSize: number;
-    maxChunkSize: number;
+// --- PIPELINE PROGRESS VISUALIZER ---
+
+const PipelineProgress = ({ stage, status }: { stage: string | null, status: string }) => {
+    const displayStage = stage || (status === 'success' ? 'COMPLETED' : status.toUpperCase().replace('_', ' '));
+    const isProcessing = ['processing', 'running', 'ingesting', 'syncing', 'enriching', 'generating', 'chunking', 'embedding', 'in_progress'].some(k => status.toLowerCase().includes(k));
+
+    return (
+        <div className="w-full bg-[#0A0A0F] border border-white/5 rounded-3xl p-10 relative overflow-hidden mb-8 shadow-2xl animate-fade-in-up group">
+             {/* Background Effects */}
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary/5 via-transparent to-transparent opacity-50 pointer-events-none"></div>
+            <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-primary/20 to-transparent"></div>
+            
+            <div className="relative z-10 flex flex-col items-center justify-center gap-4 text-center">
+                
+                <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-text-subtle uppercase tracking-[0.2em]">Pipeline Stage</span>
+                </div>
+
+                <h3 className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white via-white to-white/50 tracking-tighter drop-shadow-2xl">
+                     {displayStage}
+                </h3>
+
+                {isProcessing && (
+                     <div className="mt-4 flex flex-col items-center gap-3">
+                        <div className="h-1 w-32 bg-white/10 rounded-full overflow-hidden">
+                            <div className="h-full w-full bg-primary/50 origin-left animate-[shimmer_1.5s_infinite]"></div>
+                        </div>
+                        <div className="flex items-center gap-2 text-primary text-xs font-mono animate-pulse">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            <span>Processing...</span>
+                        </div>
+                     </div>
+                )}
+                
+                {status === 'success' && (
+                     <div className="mt-4 flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold uppercase tracking-wider animate-scale-in">
+                         <CheckCircle2 className="w-4 h-4" />
+                         <span>Ready for Retrieval</span>
+                     </div>
+                )}
+
+                {status === 'error' && (
+                     <div className="mt-4 flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold uppercase tracking-wider animate-scale-in">
+                         <AlertCircle className="w-4 h-4" />
+                         <span>Pipeline Failed</span>
+                     </div>
+                )}
+
+            </div>
+        </div>
+    );
+};
+
+
+// --- ERROR DETAILS MODAL ---
+
+interface ErrorDetailsModalProps {
+    notebookId: string;
+    doc: Document | null;
+    onClose: () => void;
 }
 
-const DEFAULT_CONFIG: IngestionConfig = {
-    parser: 'n8n_basic',
-    chunker: 'code_node',
-    contextAugmentation: false,
-    
-    // Recursive Defaults
-    chunkSize: 600,
-    chunkOverlap: 60,
-    separators: ['\n\n', '\n', '. ', ' ', ''],
+const ErrorDetailsModal: React.FC<ErrorDetailsModalProps> = ({ notebookId, doc, onClose }) => {
+    const [isLoading, setIsLoading] = useState(false);
+    const [errorData, setErrorData] = useState<any>(null);
 
-    // Agentic Defaults
-    agenticModel: 'gpt-4o-mini',
-    splitInstructions: `<role>You are a document segmentation expert. Your task is to identify the optimal transition point where one topic ends and another begins.</role>
+    useEffect(() => {
+        if (!doc) return;
+        setIsLoading(true);
+        setErrorData(null);
+
+        const fetchErrorDetails = async () => {
+            try {
+                const response = await fetch(ERROR_DETAILS_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        notebook_id: notebookId,
+                        file_id: doc.fileId || doc.id
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    let details = Array.isArray(data) ? data[0] : data;
+                    if (details.json) details = details.json;
+                    
+                    // Parse the error_description string
+                    if (details.error_description && typeof details.error_description === 'string') {
+                        try {
+                            const parsedDesc = JSON.parse(details.error_description);
+                            details.parsedError = parsedDesc;
+                        } catch (e) {
+                            // If parsing fails, treat it as a raw string
+                            details.parsedError = { message: details.error_description };
+                        }
+                    } else if (doc.error) {
+                        // Fallback to error in doc object if webhook returns nothing useful
+                         details.parsedError = { message: doc.error };
+                    }
+                    
+                    setErrorData(details);
+                }
+            } catch (err) {
+                console.error("Failed to fetch error details", err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchErrorDetails();
+    }, [doc, notebookId]);
+
+    if (!doc) return null;
+
+    const parsedError = errorData?.parsedError || {};
+    const message = parsedError.message || parsedError.errorMessage || "Unknown error occurred.";
+    const stackTrace = parsedError.stack;
+    const nodeInfo = parsedError.node;
+
+    return createPortal(
+        <div className="fixed inset-0 z-[130] bg-[#050508]/90 backdrop-blur-sm animate-fade-in flex items-center justify-center p-4">
+            <div className="bg-[#0A0A0F] border border-red-500/30 w-full max-w-3xl rounded-2xl shadow-[0_0_50px_rgba(239,68,68,0.1)] flex flex-col max-h-[90vh] overflow-hidden relative animate-scale-in">
+                
+                {/* Header */}
+                <div className="p-6 border-b border-white/10 flex items-center justify-between bg-red-500/5">
+                    <div className="flex items-center gap-4">
+                         <div className="w-12 h-12 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500 shadow-inner">
+                            <ShieldAlert className="w-6 h-6" />
+                         </div>
+                         <div>
+                             <h2 className="text-xl font-bold text-white">Ingestion Error</h2>
+                             <div className="flex items-center gap-2 mt-1">
+                                 <span className="text-xs font-mono text-text-subtle bg-white/5 px-1.5 py-0.5 rounded border border-white/5">{doc.name}</span>
+                                 {errorData?.file_type && (
+                                     <span className="text-[10px] font-mono text-text-subtle/70">{errorData.file_type}</span>
+                                 )}
+                             </div>
+                         </div>
+                    </div>
+                    <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 text-text-subtle hover:text-white transition-colors">
+                        <X className="w-5 h-5" />
+                    </button>
+                </div>
+
+                {/* Body */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
+                    {isLoading ? (
+                        <div className="flex flex-col items-center justify-center py-12 gap-4">
+                            <Loader2 className="w-8 h-8 text-red-500 animate-spin" />
+                            <p className="text-sm text-text-subtle">Fetching diagnostics...</p>
+                        </div>
+                    ) : (
+                        <>
+                            {/* Primary Error Message */}
+                            <div className="p-5 rounded-xl bg-red-500/10 border border-red-500/20">
+                                <h3 className="text-xs font-bold text-red-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                    <AlertTriangle className="w-4 h-4" />
+                                    Failure Reason
+                                </h3>
+                                <p className="text-sm text-white font-medium leading-relaxed">
+                                    {message}
+                                </p>
+                            </div>
+
+                            {/* Node Context */}
+                            {nodeInfo && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                     <div className="p-4 rounded-xl bg-surface border border-white/10">
+                                         <span className="text-[10px] font-bold text-text-subtle uppercase tracking-wider block mb-1">Failed Node</span>
+                                         <div className="text-sm text-white font-mono flex items-center gap-2">
+                                             <Activity className="w-4 h-4 text-primary" />
+                                             {nodeInfo.name}
+                                         </div>
+                                     </div>
+                                     <div className="p-4 rounded-xl bg-surface border border-white/10">
+                                         <span className="text-[10px] font-bold text-text-subtle uppercase tracking-wider block mb-1">Node Type</span>
+                                         <div className="text-sm text-white font-mono flex items-center gap-2">
+                                             <Terminal className="w-4 h-4 text-secondary" />
+                                             {nodeInfo.type}
+                                         </div>
+                                     </div>
+                                </div>
+                            )}
+
+                            {/* Stack Trace */}
+                            {stackTrace && (
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2 text-xs font-bold text-text-subtle uppercase tracking-wider">
+                                        <Terminal className="w-4 h-4" />
+                                        System Stack Trace
+                                    </div>
+                                    <div className="p-4 rounded-xl bg-[#050508] border border-white/10 overflow-x-auto custom-scrollbar">
+                                        <pre className="text-[10px] font-mono text-red-200/70 whitespace-pre-wrap leading-relaxed">
+                                            {stackTrace}
+                                        </pre>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Raw Dump (Debug) */}
+                            {!parsedError.message && (
+                                <div className="space-y-2">
+                                    <span className="text-xs font-bold text-text-subtle uppercase tracking-wider">Raw Payload</span>
+                                    <div className="p-4 rounded-xl bg-[#050508] border border-white/10 overflow-x-auto custom-scrollbar">
+                                        <pre className="text-[10px] font-mono text-text-subtle whitespace-pre-wrap leading-relaxed">
+                                            {JSON.stringify(errorData, null, 2)}
+                                        </pre>
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+                
+                {/* Footer */}
+                <div className="p-4 border-t border-white/10 bg-surface/50 flex justify-end">
+                    <Button variant="outline" onClick={onClose} className="border-white/10">Close</Button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+}
+
+
+// --- INGESTION DETAILS MODAL ---
+
+interface IngestionDetailsModalProps {
+    doc: Document | null;
+    notebookId: string;
+    onClose: () => void;
+}
+
+const IngestionDetailsModal: React.FC<IngestionDetailsModalProps> = ({ doc, notebookId, onClose }) => {
+    const [fetchedData, setFetchedData] = useState<any>(null);
+    const [isLoading, setIsLoading] = useState(false);
+    
+    // Real-time Contextual Data
+    const [contextualChunks, setContextualChunks] = useState<ContextualChunk[]>([]);
+    const [isLoadingChunks, setIsLoadingChunks] = useState(false);
+    
+    // Real-time Workflow Stage
+    const [workflowStage, setWorkflowStage] = useState<string | null>(null);
+
+    // Initial Fetch of Settings
+    useEffect(() => {
+        if (!doc) return;
+        setFetchedData(null);
+        setContextualChunks([]);
+        setWorkflowStage(null);
+        setIsLoading(true);
+
+        const fetchDetails = async () => {
+            try {
+                const targetId = doc.fileId || doc.id;
+                const response = await fetch(INGESTION_SETTINGS_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        notebook_id: notebookId,
+                        file_id: targetId,
+                        job_id: doc.jobId || doc.id
+                    })
+                });
+
+                if (response.ok) {
+                    const res = await response.json();
+                    let data = Array.isArray(res) ? res[0] : res;
+                    if (data.json) data = data.json;
+                    
+                    if (data.ingestion_settings && typeof data.ingestion_settings === 'string') {
+                        try {
+                            data.ingestion_settings = JSON.parse(data.ingestion_settings);
+                        } catch (e) {
+                            console.warn("Failed to parse ingestion_settings JSON string", e);
+                        }
+                    }
+                    setFetchedData(data);
+                }
+            } catch (err) {
+                console.error("Failed to fetch ingestion details", err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchDetails();
+    }, [doc, notebookId]);
+
+    // Poll for Workflow Stage
+    useEffect(() => {
+        if (!doc) return;
+
+        const fetchWorkflowStage = async () => {
+             try {
+                const response = await fetch(WORKFLOW_STAGE_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        file_id: doc.fileId || doc.id,
+                        notebook_id: notebookId,
+                        job_id: doc.jobId || doc.id
+                    })
+                });
+                
+                if (response.ok) {
+                    const res = await response.json();
+                    let data = Array.isArray(res) ? res[0] : res;
+                    // Handle n8n wrapping
+                    if (data.json) data = data.json;
+                    
+                    const stage = data.stage || data.workflow_stage || data.current_stage || data.status;
+                    if (stage) setWorkflowStage(String(stage));
+                }
+             } catch (e) {
+                 console.error("Failed to fetch workflow stage", e);
+             }
+        };
+
+        fetchWorkflowStage();
+        const interval = setInterval(fetchWorkflowStage, 2000); // 2s Polling
+        return () => clearInterval(interval);
+
+    }, [doc, notebookId]);
+
+    // Derived values
+    const settings = fetchedData?.ingestion_settings || {};
+    const displayData = {
+        name: fetchedData?.file_name || doc?.name,
+        fileId: fetchedData?.file_id || doc?.fileId || 'N/A',
+        jobId: fetchedData?.job_id || doc?.jobId || 'N/A',
+        status: fetchedData?.status || doc?.status,
+        type: fetchedData?.file_type || doc?.type,
+        path: fetchedData?.file_path,
+        url: fetchedData?.file_url,
+        createdAt: fetchedData?.created_at ? new Date(fetchedData.created_at).toLocaleString() : doc?.added,
+        method: settings.ingestion_method || doc?.ingestionConfig?.method || 'Standard',
+        parser: settings.config_parse_mode || doc?.ingestionConfig?.parser || 'Standard',
+        chunking: settings.config_chunk_mode || doc?.ingestionConfig?.chunking || 'Recursive',
+        destination: settings.config_destination || doc?.ingestionConfig?.destination || 'Vector DB',
+        chunkSize: settings.recursiv_chunk_size || doc?.ingestionConfig?.chunkSize,
+        overlap: settings.recursiv_chunk_overlap || doc?.ingestionConfig?.overlap,
+        augmentation: settings.contextual_retrieval ?? doc?.ingestionConfig?.augmentation,
+        batchSize: settings.batch_processing_size || 'N/A',
+        contextBatchSize: settings.contextual_batch_processing_size || 'N/A',
+        agenticInstructions: settings.agentic_instructions
+    };
+
+    const isAugmentationEnabled = displayData.augmentation === true || displayData.augmentation === 'Enabled' || displayData.augmentation === 'true';
+
+    // Poll for Contextual Chunks if Augmentation is Enabled
+    useEffect(() => {
+        if (!doc || !isAugmentationEnabled || !displayData.fileId) return;
+        
+        // Don't show global loader for polling, only initial
+        if (contextualChunks.length === 0) setIsLoadingChunks(true);
+
+        const fetchChunks = async () => {
+             try {
+                // Explicitly use doc properties as fallback to ensure valid IDs are sent
+                // instead of relying solely on displayData which might be 'N/A' initially
+                const targetFileId = displayData.fileId !== 'N/A' ? displayData.fileId : (doc.fileId || doc.id);
+                const targetJobId = doc.jobId || doc.id;
+
+                const response = await fetch(CONTEXTUAL_RETRIEVAL_STATE_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        notebook_id: notebookId,
+                        file_id: targetFileId,
+                        job_id: targetJobId
+                    })
+                });
+                
+                if (response.ok) {
+                    const res = await response.json();
+                    let data = Array.isArray(res) ? res : (res.data || []);
+                    // Handle n8n wrapping
+                    data = data.map((item: any) => item.json || item);
+                    setContextualChunks(data);
+                }
+             } catch (e) {
+                 console.error("Failed to fetch contextual chunks", e);
+             } finally {
+                 setIsLoadingChunks(false);
+             }
+        };
+
+        fetchChunks();
+        const interval = setInterval(fetchChunks, 3000); // 3s Polling
+        return () => clearInterval(interval);
+
+    }, [isAugmentationEnabled, notebookId, displayData.fileId, doc]);
+
+
+    if (!doc) return null;
+
+    const DetailRow = ({ label, value, icon: Icon, fullWidth = false }: any) => (
+        <div className={`flex items-center justify-between p-4 rounded-xl bg-[#0A0A0F] border border-white/5 hover:border-white/10 transition-colors group ${fullWidth ? 'col-span-full' : ''}`}>
+            <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-white/5 text-text-subtle group-hover:text-white transition-colors">
+                    <Icon className="w-4 h-4" />
+                </div>
+                <span className="text-xs font-bold text-text-subtle uppercase tracking-wider">{label}</span>
+            </div>
+            {isLoading && !fetchedData ? (
+                 <div className="h-4 w-12 bg-white/5 rounded animate-pulse"></div>
+            ) : (
+                <span className="text-xs font-bold text-white font-mono text-right max-w-[200px] truncate" title={String(value)}>
+                    {value === true ? 'Enabled' : value === false ? 'Disabled' : (value || 'N/A')}
+                </span>
+            )}
+        </div>
+    );
+
+    return createPortal(
+        <div className="fixed inset-0 z-[120] bg-[#050508] animate-fade-in flex flex-col">
+            
+            {/* Top Navigation Bar */}
+            <div className="h-16 border-b border-white/5 flex items-center justify-between px-6 bg-[#050508]/80 backdrop-blur-md shrink-0">
+                <div className="flex items-center gap-4">
+                    <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/5 text-text-subtle hover:text-white transition-colors">
+                        <ArrowLeft className="w-5 h-5" />
+                    </button>
+                    <div className="h-8 w-px bg-white/10"></div>
+                    <div>
+                        <h2 className="text-lg font-bold text-white leading-none">{displayData.name}</h2>
+                        <div className="flex items-center gap-2 mt-1">
+                             <span className="text-[10px] font-mono text-text-subtle">FILE ID: {displayData.fileId}</span>
+                        </div>
+                    </div>
+                </div>
+                <div className="flex items-center gap-3">
+                     {displayData.url && (
+                        <a href={displayData.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 text-xs text-text-subtle hover:text-white transition-colors">
+                            <Link className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Open Source</span>
+                        </a>
+                     )}
+                </div>
+            </div>
+
+            {/* Main Scrollable Content */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-10">
+                <div className="max-w-7xl mx-auto space-y-8">
+
+                    {/* Pipeline Progress */}
+                    <PipelineProgress stage={workflowStage} status={displayData.status} />
+
+                    {/* Section 1: Metadata & Configuration */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        
+                        {/* Column 1: Config */}
+                        <div className="lg:col-span-2 space-y-6">
+                            <div className="bg-[#0A0A0F] border border-white/5 rounded-3xl p-8">
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                                        <Sliders className="w-5 h-5" />
+                                    </div>
+                                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Pipeline Configuration</h3>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <DetailRow label="Ingestion Method" value={displayData.method} icon={Share2} />
+                                    <DetailRow label="Target Destination" value={displayData.destination} icon={Database} />
+                                    <DetailRow label="Parser Engine" value={displayData.parser} icon={ScanText} />
+                                    <DetailRow label="Augmentation" value={displayData.augmentation} icon={Sparkles} />
+                                    <DetailRow label="Batch Size" value={displayData.batchSize} icon={Sliders} />
+                                    <DetailRow label="Ctx. Batch Size" value={displayData.contextBatchSize} icon={Sliders} />
+                                    <DetailRow label="Chunking Strategy" value={displayData.chunking} icon={Layers} fullWidth />
+                                    <DetailRow label="Recursive Chunk Size" value={displayData.chunkSize} icon={Maximize} />
+                                    <DetailRow label="Recursive Overlap" value={displayData.overlap} icon={Minimize} />
+                                </div>
+                            </div>
+
+                             {/* Agentic Instructions */}
+                             {displayData.agenticInstructions && (
+                                <div className="bg-[#0A0A0F] border border-white/5 rounded-3xl p-8">
+                                    <div className="flex items-center gap-3 mb-6">
+                                        <div className="p-2 rounded-lg bg-secondary/10 text-secondary">
+                                            <Brain className="w-5 h-5" />
+                                        </div>
+                                        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Agentic Instructions</h3>
+                                    </div>
+                                    <div className="p-5 rounded-2xl bg-black/40 border border-white/5 text-xs font-mono text-gray-300 leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto custom-scrollbar shadow-inner">
+                                        {displayData.agenticInstructions}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Column 2: Metadata */}
+                        <div className="space-y-6">
+                            <div className="bg-[#0A0A0F] border border-white/5 rounded-3xl p-8 sticky top-6">
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="p-2 rounded-lg bg-tertiary/10 text-tertiary">
+                                        <Info className="w-5 h-5" />
+                                    </div>
+                                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">System Metadata</h3>
+                                </div>
+                                <div className="space-y-4">
+                                     <div>
+                                         <label className="text-[10px] font-bold text-text-subtle uppercase tracking-wider block mb-1">Job ID</label>
+                                         <div className="p-3 rounded-xl bg-black/40 border border-white/5 text-xs font-mono text-white break-all shadow-inner">
+                                             {displayData.jobId}
+                                         </div>
+                                     </div>
+                                     <div>
+                                         <label className="text-[10px] font-bold text-text-subtle uppercase tracking-wider block mb-1">File ID</label>
+                                         <div className="p-3 rounded-xl bg-black/40 border border-white/5 text-xs font-mono text-white break-all shadow-inner">
+                                             {displayData.fileId}
+                                         </div>
+                                     </div>
+                                     <div>
+                                         <label className="text-[10px] font-bold text-text-subtle uppercase tracking-wider block mb-1">Created At</label>
+                                         <div className="p-3 rounded-xl bg-black/40 border border-white/5 text-xs font-mono text-white flex items-center gap-2 shadow-inner">
+                                             <Calendar className="w-3.5 h-3.5 text-text-subtle" />
+                                             {displayData.createdAt}
+                                         </div>
+                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Section 2: Real-time Augmentation Table */}
+                    {isAugmentationEnabled && (
+                        <div className="animate-fade-in-up">
+                            <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
+                                        <Activity className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-white">Contextual Retrieval State</h3>
+                                        <p className="text-xs text-text-subtle">Real-time processing status of enhanced chunks.</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                     {isLoadingChunks && <Loader2 className="w-4 h-4 text-primary animate-spin" />}
+                                     <span className="text-[10px] font-mono text-text-subtle bg-white/5 px-2 py-1 rounded">
+                                         {contextualChunks.length} Records
+                                     </span>
+                                </div>
+                            </div>
+
+                            <div className="border border-white/10 rounded-2xl overflow-hidden bg-[#0A0A0F] shadow-2xl">
+                                <div className="overflow-x-auto custom-scrollbar">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead>
+                                            <tr className="bg-white/5 border-b border-white/5">
+                                                <th className="py-3 px-4 text-[10px] font-bold text-text-subtle uppercase tracking-wider whitespace-nowrap">Status</th>
+                                                <th className="py-3 px-4 text-[10px] font-bold text-text-subtle uppercase tracking-wider whitespace-nowrap">Chunk ID</th>
+                                                <th className="py-3 px-4 text-[10px] font-bold text-text-subtle uppercase tracking-wider whitespace-nowrap w-1/3">Original Chunk</th>
+                                                <th className="py-3 px-4 text-[10px] font-bold text-text-subtle uppercase tracking-wider whitespace-nowrap w-1/3">Enhanced Chunk</th>
+                                                <th className="py-3 px-4 text-[10px] font-bold text-text-subtle uppercase tracking-wider whitespace-nowrap text-center">Retries</th>
+                                                <th className="py-3 px-4 text-[10px] font-bold text-text-subtle uppercase tracking-wider whitespace-nowrap text-right">Updated</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-white/5">
+                                            {contextualChunks.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={6} className="py-12 text-center text-text-subtle text-xs">
+                                                        {isLoadingChunks ? 'Loading records...' : 'No contextual chunks found yet.'}
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                contextualChunks.map((row, idx) => (
+                                                    <tr key={idx} className="group hover:bg-white/[0.02] transition-colors">
+                                                        <td className="py-3 px-4 whitespace-nowrap">
+                                                            <StatusBadge status={row.status} />
+                                                        </td>
+                                                        <td className="py-3 px-4">
+                                                            <div className="font-mono text-[10px] text-text-subtle truncate max-w-[120px]" title={row.chunk_id}>
+                                                                {row.chunk_id}
+                                                            </div>
+                                                        </td>
+                                                        <td className="py-3 px-4">
+                                                            <div className="text-xs text-text-subtle/80 line-clamp-2 min-w-[200px] font-mono" title={row.original_chunk}>
+                                                                {row.original_chunk || '-'}
+                                                            </div>
+                                                        </td>
+                                                        <td className="py-3 px-4">
+                                                            <div className="text-xs text-primary/80 line-clamp-2 min-w-[200px] font-mono" title={row.enhanced_chunk}>
+                                                                {row.enhanced_chunk || '-'}
+                                                            </div>
+                                                        </td>
+                                                        <td className="py-3 px-4 text-center">
+                                                            <span className={`text-xs font-bold ${row.retry_count > 0 ? 'text-amber-400' : 'text-text-subtle/50'}`}>
+                                                                {row.retry_count}
+                                                            </span>
+                                                        </td>
+                                                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                                                            <div className="text-[10px] text-text-subtle font-mono">
+                                                                {new Date(row.updated_at || row.created_at).toLocaleTimeString()}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+}
+
+// --- INGESTION MODAL ---
+// ... (rest of the file remains the same)
+
+interface IngestionModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    notebookId: string;
+    notebookName: string;
+    notebookDescription?: string;
+    config: NotebookConfig;
+    onIngestionStarted: () => void;
+}
+
+const IngestionModal: React.FC<IngestionModalProps> = ({ 
+    isOpen, 
+    onClose, 
+    notebookId, 
+    notebookName,
+    notebookDescription,
+    config,
+    onIngestionStarted 
+}) => {
+    // Steps: source -> discovery (SharePoint) / local_select (Local) -> settings -> processing
+    const [step, setStep] = useState<'source' | 'discovery' | 'local_select' | 'settings'>('source');
+    const [sourceType, setSourceType] = useState<'sharepoint' | 'local' | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
+    
+    // Data State
+    const [discoveredFiles, setDiscoveredFiles] = useState<SharePointFile[]>([]);
+    const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+    const [localFiles, setLocalFiles] = useState<LocalFile[]>([]);
+
+    // Configuration State
+    const [parsingMethod, setParsingMethod] = useState('text'); // Default to Basic Extractor
+    const [chunkingMethod, setChunkingMethod] = useState('recursive');
+    const [chunkSize, setChunkSize] = useState(600); // Default to 600
+    const [overlap, setOverlap] = useState(200); // Default to 200
+    const [augmentation, setAugmentation] = useState('standard');
+    const [destination, setDestination] = useState('postgres');
+    
+    // Performance State
+    const [batchSize, setBatchSize] = useState(50);
+    const [contextBatchSize, setContextBatchSize] = useState(10);
+
+    // Reset state on open
+    useEffect(() => {
+        if (isOpen) {
+            setStep('source');
+            setSourceType(null);
+            setIsLoading(false);
+            setDiscoveredFiles([]);
+            setSelectedFileIds(new Set());
+            setLocalFiles([]);
+            setParsingMethod('text');
+            setChunkingMethod('recursive');
+            setChunkSize(600); // Default to 600
+            setOverlap(200); // Default to 200
+            setAugmentation('standard');
+            setDestination('postgres');
+            setBatchSize(50);
+            setContextBatchSize(10);
+        }
+    }, [isOpen]);
+
+    if (!isOpen) return null;
+
+    const handleDiscoverSharePoint = async () => {
+        setSourceType('sharepoint');
+        setStep('discovery');
+        setIsLoading(true);
+        try {
+            const response = await fetch(SHAREPOINT_DISCOVERY_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notebook_id: notebookId, orchestrator_id: ORCHESTRATOR_ID })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                let files: SharePointFile[] = [];
+                const raw = Array.isArray(data) ? data : (data.files || data.data || []);
+                
+                files = raw.map((item: any) => {
+                    const f = item.json || item; 
+                    return {
+                        id: f.id || f.uuid || Math.random().toString(36),
+                        name: f.name || f.title || 'Untitled',
+                        webUrl: f.webUrl || f.url,
+                        size: f.size ? `${Math.round(f.size / 1024)} KB` : 'Unknown',
+                        type: f.folder ? 'folder' : 'file'
+                    };
+                });
+
+                setDiscoveredFiles(files);
+            } else {
+                console.error("Discovery failed");
+                alert("Failed to discover files. Please check the backend connection.");
+            }
+        } catch (e) {
+            console.error("Discovery error", e);
+            alert("Error connecting to SharePoint service.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleLocalSelect = () => {
+        setSourceType('local');
+        setStep('local_select');
+    };
+
+    const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files.length > 0) {
+            const newFiles = Array.from(e.target.files).map(f => {
+                (f as LocalFile).id = Math.random().toString(36).substr(2, 9);
+                return f;
+            });
+            setLocalFiles(prev => [...prev, ...newFiles]);
+        }
+    };
+
+    const removeLocalFile = (index: number) => {
+        setLocalFiles(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const toggleSelection = (id: string) => {
+        const newSet = new Set(selectedFileIds);
+        if (newSet.has(id)) newSet.delete(id);
+        else newSet.add(id);
+        setSelectedFileIds(newSet);
+    };
+
+    const proceedToSettings = () => {
+        if (sourceType === 'sharepoint' && selectedFileIds.size === 0) return;
+        if (sourceType === 'local' && localFiles.length === 0) return;
+        setStep('settings');
+    };
+
+    const handleIngest = async () => {
+        setIsLoading(true);
+        
+        try {
+            const ingestionMethodMap: Record<string, string> = {
+                'sharepoint': 'SharePoint',
+                'local': 'Local Upload'
+            };
+            const parserModeMap: Record<string, string> = {
+                'text': 'Basic Extractor',
+                'layout': 'LlamaParse',
+                'ocr': 'Mistral OCR',
+                'gemini_ocr': 'Gemini OCR',
+                'docling': 'Docling Parser'
+            };
+            const chunkingModeMap: Record<string, string> = {
+                'recursive': 'Recursive Text Splitter',
+                'agentic': 'Agentic Chunking',
+                'docling': 'Docling Chunker'
+            };
+            const destinationMap: Record<string, string> = {
+                'postgres': 'PostgreSQL (pgvector)',
+                'qdrant': 'Qdrant Vector DB',
+                'pinecone': 'Pinecone'
+            };
+
+            const agenticInstructions = `<role>You are a document segmentation expert. Your task is to identify the optimal transition point where one topic ends and another begins.</role>
 
 <objective>Find a natural breakpoint that keeps semantically related content together. Split only where topics genuinely transition—not arbitrarily.</objective>
 
@@ -103,872 +989,71 @@ No explanations, no punctuation—just the single word.
 Example:
 If the text ends with: "The company was founded in 2022."
 Output: 2022
-</output_format>`,
-    minChunkSize: 300,
-    maxChunkSize: 800,
+</output_format>`;
 
-    destination: 'postgres'
-};
-
-// --- Ingestion Settings Component ---
-
-interface IngestionSettingsProps {
-    onBack: () => void;
-    onStart: (config: IngestionConfig) => void;
-    isLoading: boolean;
-}
-
-const OpenAILogo = ({ className }: { className?: string }) => (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg">
-      <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.0462 6.0462 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 3.5366-2.1956a1.0276 1.0276 0 0 0 .512-.9408v-4.47l4.198 2.3766v2.8026a4.4966 4.4966 0 0 1-5.512 3.5484zm-5.916-5.061a4.4918 4.4918 0 0 1 0-5.4707v4.2154l3.638 2.0935v.0152l-2.5046 1.5227a1.0381 1.0381 0 0 0-.5235.8975v.0123a4.4842 4.4842 0 0 1-.6099-3.286zM4.567 6.7019a4.4966 4.4966 0 0 1 5.426-3.6582v2.8035L5.8012 8.22a1.0352 1.0352 0 0 0-.533.8984v4.186l-2.5532-1.5484a4.4966 4.4966 0 0 1 1.852-5.0541zm12.9367-1.5385v-2.8035a4.4966 4.4966 0 0 1 2.165 7.7821l-2.577 1.4816v-4.2068l3.7238-2.2451zM13.32 5.0804a4.4966 4.4966 0 0 1 2.787 1.105l-3.586 2.1936a1.0362 1.0362 0 0 0-.5044.9504v4.4423l-4.2503-2.3671V8.5702a4.5252 4.5252 0 0 1 5.5537-3.4898z" />
-    </svg>
-);
-  
-const OllamaLogo = ({ className }: { className?: string }) => (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg">
-       <path d="M21.56,11.6C21.34,7.82,17.83,5.71,14.78,5.32V4.07C14.78,2.5,13.61,1.21,12.12,1.21S9.46,2.5,9.46,4.07v1.25C6.4,5.71,2.9,7.82,2.68,11.6c-0.12,2.04,0.64,4.31,2.2,5.82C4.25,18.12,4,19,4,20c0,1.66,1.34,3,3,3s3-1.34,3-3c0-0.32-0.06-0.63-0.15-0.92c0.71,0.12,1.44,0.17,2.15,0.17s1.44-0.05,2.15-0.17C14.06,19.37,14,19.68,14,20c0,1.66,1.34,3,3,3s3-1.34,3-3c0-1-0.25-1.88-0.88-2.58C20.92,15.91,21.68,13.64,21.56,11.6z M16,12.5c-0.83,0-1.5-0.67-1.5-1.5s0.67-1.5,1.5-1.5s1.5,0.67,1.5,1.5S16.83,12.5,16,12.5z M8.24,12.5c-0.83,0-1.5-0.67-1.5-1.5s0.67-1.5,1.5-1.5s1.5,0.67,1.5,1.5S9.07,12.5,8.24,12.5z M12.12,16c-0.63,0-1.21-0.19-1.68-0.52c0.47-0.26,0.96-0.41,1.68-0.41s1.21,0.16,1.68,0.41C13.33,15.81,12.75,16,12.12,16z"/>
-    </svg>
-);
-
-const IngestionSettings: React.FC<IngestionSettingsProps> = ({ onBack, onStart, isLoading }) => {
-    const [config, setConfig] = useState<IngestionConfig>(DEFAULT_CONFIG);
-
-    const updateConfig = (key: keyof IngestionConfig, value: any) => {
-        setConfig(prev => ({ ...prev, [key]: value }));
-    };
-
-    const ConfigSection = ({ title, icon: Icon, children }: { title: string, icon: any, children: React.ReactNode }) => (
-        <div className="mb-8 animate-fade-in-up">
-            <div className="flex items-center gap-3 mb-4 border-b border-white/5 pb-2">
-                <div className="p-2 rounded-lg bg-surface border border-white/10 text-primary">
-                    <Icon className="w-5 h-5" />
-                </div>
-                <h3 className="text-lg font-bold text-white tracking-tight">{title}</h3>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {children}
-            </div>
-        </div>
-    );
-
-    const SelectionCard = ({ 
-        selected, 
-        onClick, 
-        title, 
-        description, 
-        icon: Icon,
-        disabled = false,
-        disabledReason
-    }: { 
-        selected: boolean, 
-        onClick: () => void, 
-        title: string, 
-        description: string, 
-        icon: any,
-        disabled?: boolean,
-        disabledReason?: string
-    }) => (
-        <div 
-            onClick={!disabled ? onClick : undefined}
-            className={`p-4 rounded-xl border-2 transition-all duration-200 relative group overflow-hidden flex flex-col h-full
-                ${disabled 
-                    ? 'opacity-60 cursor-not-allowed bg-surface/20 border-white/5 grayscale' 
-                    : selected 
-                        ? 'cursor-pointer bg-primary/5 border-primary shadow-[0_0_20px_rgba(126,249,255,0.1)]' 
-                        : 'cursor-pointer bg-surface/50 border-white/5 hover:border-white/20 hover:bg-surface'
-                }`}
-        >
-            {selected && !disabled && (
-                <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-primary text-black flex items-center justify-center">
-                    <Check className="w-3 h-3" />
-                </div>
-            )}
-            <div className={`mb-3 w-10 h-10 rounded-lg flex items-center justify-center border
-                ${disabled
-                    ? 'bg-white/5 border-white/10 text-text-subtle'
-                    : selected 
-                        ? 'bg-primary/20 border-primary/30 text-primary' 
-                        : 'bg-white/5 border-white/10 text-text-subtle group-hover:text-white'
-                }
-            `}>
-                <Icon className="w-5 h-5" />
-            </div>
-            <h4 className={`text-sm font-bold mb-1 ${selected && !disabled ? 'text-white' : 'text-gray-400'}`}>{title}</h4>
-            <p className="text-xs text-text-subtle leading-relaxed mb-2 flex-1">{description}</p>
-            
-            {disabled && disabledReason && (
-                <div className="mt-3 flex items-start gap-2 text-[10px] text-amber-400/90 font-medium bg-amber-500/10 p-2 rounded border border-amber-500/20">
-                    <AlertTriangle className="w-3 h-3 shrink-0" />
-                    <span className="leading-tight">{disabledReason}</span>
-                </div>
-            )}
-        </div>
-    );
-
-    const AGENTIC_MODELS = [
-        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'OpenAI - Cost Effective', provider: 'openai', disabled: false },
-        { id: 'gpt-4o', name: 'GPT-4o', description: 'OpenAI - High Intelligence', provider: 'openai', disabled: true, reason: 'Temporarily disabled.' },
-        { id: 'qwen2.5:7b-instruct-q4_K_M', name: 'Qwen 2.5 7B', description: 'Ollama - Local', provider: 'ollama', disabled: true, reason: 'Coming soon. Needs GPU.' },
-        { id: 'llama-3.2-1b', name: 'Llama 3.2 1B', description: 'Ollama - Local', provider: 'ollama', disabled: true, reason: 'Coming soon. Needs GPU.' },
-        { id: 'mistral-large', name: 'Mistral Large', description: 'Ollama - Local', provider: 'ollama', disabled: true, reason: 'Coming soon. Needs GPU.' },
-    ];
-
-    return (
-        <div className="h-full flex flex-col bg-[#0E0E12] animate-fade-in">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-8 pb-6 border-b border-white/5">
-                <div className="flex items-center gap-4">
-                    <button 
-                        onClick={onBack}
-                        disabled={isLoading}
-                        className="w-10 h-10 rounded-full bg-surface border border-white/10 flex items-center justify-center text-text-subtle hover:text-white hover:border-primary/30 transition-all hover:-translate-x-1 disabled:opacity-50"
-                    >
-                        <ArrowLeft className="w-5 h-5" />
-                    </button>
-                    <div>
-                        <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                            Ingestion Settings
-                        </h2>
-                        <p className="text-text-subtle text-sm mt-1">Configure how your data is parsed, chunked, and indexed.</p>
-                    </div>
-                </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-                {/* 1. Parsing Strategy */}
-                <ConfigSection title="Parsing Strategy" icon={ScanLine}>
-                    <SelectionCard 
-                        selected={config.parser === 'n8n_basic'}
-                        onClick={() => updateConfig('parser', 'n8n_basic')}
-                        title="Basic Extractor"
-                        description="Simple text/HTML extraction using standard n8n nodes. Best for simple files."
-                        icon={FileText}
-                    />
-                    <SelectionCard 
-                        selected={config.parser === 'llamaindex'}
-                        onClick={() => updateConfig('parser', 'llamaindex')}
-                        title="LlamaParse"
-                        description="Advanced parsing for complex PDFs with tables and figures."
-                        icon={Cpu}
-                    />
-                    <SelectionCard 
-                        selected={config.parser === 'mistral_ocr'}
-                        onClick={() => updateConfig('parser', 'mistral_ocr')}
-                        title="Mistral OCR"
-                        description="High-fidelity optical character recognition for scanned documents."
-                        icon={ScanLine}
-                    />
-                    <SelectionCard 
-                        selected={config.parser === 'gemini_ocr'}
-                        onClick={() => updateConfig('parser', 'gemini_ocr')}
-                        title="Gemini OCR"
-                        description="Multimodal parsing using Google Gemini Vision capabilities."
-                        icon={Sparkles}
-                    />
-                     <SelectionCard 
-                        selected={config.parser === 'docling'}
-                        onClick={() => updateConfig('parser', 'docling')}
-                        title="Docling Parser"
-                        description="Specialized layout analysis and structure extraction."
-                        icon={FileCode}
-                        disabled={true}
-                        disabledReason="Resource heavy. Requires GPU upgrade. Coming soon."
-                    />
-                </ConfigSection>
-
-                {/* 2. Chunking Strategy */}
-                <ConfigSection title="Chunking Strategy" icon={Layers}>
-                    <SelectionCard 
-                        selected={config.chunker === 'code_node'}
-                        onClick={() => updateConfig('chunker', 'code_node')}
-                        title="Recursive Text Splitter"
-                        description="Standard splitting using separators and overlap."
-                        icon={Code}
-                    />
-                    <SelectionCard 
-                        selected={config.chunker === 'agentic'}
-                        onClick={() => updateConfig('chunker', 'agentic')}
-                        title="Agentic Chunking"
-                        description="Semantic splitting based on content meaning and context boundaries."
-                        icon={Cpu}
-                    />
-                    <SelectionCard 
-                        selected={config.chunker === 'docling'}
-                        onClick={() => updateConfig('chunker', 'docling')}
-                        title="Docling Chunker"
-                        description="Hierarchical chunking preserving document structure."
-                        icon={FileCode}
-                        disabled={true}
-                        disabledReason="Resource heavy. Requires GPU upgrade. Coming soon."
-                    />
-                </ConfigSection>
-
-                {/* Chunking Parameters (Conditional) */}
-                {config.chunker === 'code_node' && (
-                    <div className="mb-8 p-6 rounded-xl bg-surface/30 border border-white/5 animate-fade-in-up">
-                        <h4 className="text-xs font-bold text-text-subtle uppercase tracking-wider mb-4 flex items-center gap-2">
-                            <Terminal className="w-3.5 h-3.5" />
-                            Recursive Splitter Parameters
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <div className="space-y-2">
-                                <div className="flex justify-between">
-                                    <label className="text-sm font-medium text-white">Chunk Size</label>
-                                    <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">{config.chunkSize}</span>
-                                </div>
-                                <input 
-                                    type="range" min="100" max="2000" step="50"
-                                    value={config.chunkSize}
-                                    onChange={(e) => updateConfig('chunkSize', parseInt(e.target.value))}
-                                    className="w-full h-2 bg-surface rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary"
-                                />
-                                <p className="text-xs text-text-subtle">Target characters per chunk.</p>
-                            </div>
-                            <div className="space-y-2">
-                                <div className="flex justify-between">
-                                    <label className="text-sm font-medium text-white">Chunk Overlap</label>
-                                    <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">{config.chunkOverlap}</span>
-                                </div>
-                                <input 
-                                    type="range" min="0" max="200" step="10"
-                                    value={config.chunkOverlap}
-                                    onChange={(e) => updateConfig('chunkOverlap', parseInt(e.target.value))}
-                                    className="w-full h-2 bg-surface rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary"
-                                />
-                                <p className="text-xs text-text-subtle">Overlap between adjacent chunks (rec. 10%).</p>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {config.chunker === 'agentic' && (
-                    <div className="mb-8 p-6 rounded-xl bg-surface/30 border border-white/5 animate-fade-in-up">
-                        <h4 className="text-xs font-bold text-text-subtle uppercase tracking-wider mb-6 flex items-center gap-2">
-                            <Cpu className="w-3.5 h-3.5" />
-                            Agentic Chunking Configuration
-                        </h4>
-                        
-                        {/* Model Selection */}
-                        <div className="mb-6 pb-6 border-b border-white/5">
-                            <label className="text-sm font-medium text-white mb-3 block">Segmentation Model</label>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                {AGENTIC_MODELS.map(model => (
-                                    <div 
-                                        key={model.id}
-                                        onClick={() => !model.disabled && updateConfig('agenticModel', model.id)}
-                                        className={`relative p-3 rounded-lg border flex items-start gap-3 transition-all ${
-                                            model.disabled 
-                                                ? 'opacity-60 bg-white/5 border-white/5 cursor-not-allowed grayscale' 
-                                                : config.agenticModel === model.id 
-                                                    ? 'bg-secondary/10 border-secondary cursor-pointer shadow-lg' 
-                                                    : 'bg-surface border-white/10 hover:border-white/20 cursor-pointer'
-                                        }`}
-                                    >
-                                        <div className={`mt-0.5 w-8 h-8 rounded flex items-center justify-center border shrink-0 ${
-                                            model.provider === 'openai' 
-                                                ? 'bg-green-500/10 border-green-500/20 text-green-500' 
-                                                : 'bg-orange-500/10 border-orange-500/20 text-orange-500'
-                                        }`}>
-                                            {model.provider === 'openai' ? <OpenAILogo className="w-4 h-4" /> : <OllamaLogo className="w-4 h-4" />}
-                                        </div>
-                                        <div>
-                                            <div className="flex items-center gap-2">
-                                                <div className={`text-sm font-bold ${config.agenticModel === model.id ? 'text-white' : 'text-gray-400'}`}>{model.name}</div>
-                                                {config.agenticModel === model.id && !model.disabled && <Check className="w-3 h-3 text-secondary" />}
-                                            </div>
-                                            <div className="text-[10px] text-text-subtle mt-0.5">{model.description}</div>
-                                            {model.disabled && (
-                                                <div className="mt-2 flex items-center gap-1.5 text-[9px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 w-fit">
-                                                    <AlertTriangle className="w-2.5 h-2.5" />
-                                                    {model.reason}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="space-y-6">
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium text-white">Split Instructions</label>
-                                <textarea 
-                                    value={config.splitInstructions}
-                                    onChange={(e) => updateConfig('splitInstructions', e.target.value)}
-                                    placeholder="Describe how the agent should determine split points..."
-                                    className="w-full h-24 bg-surface border border-white/10 rounded-xl px-4 py-3 text-white focus:border-secondary/50 focus:outline-none transition-colors text-xs font-mono resize-none leading-relaxed"
-                                />
-                                <p className="text-xs text-text-subtle">Prompt to guide the agent in identifying semantic boundaries.</p>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                <div className="space-y-2">
-                                    <div className="flex justify-between">
-                                        <label className="text-sm font-medium text-white">Min Chunk Size</label>
-                                        <span className="text-xs font-mono text-secondary bg-secondary/10 px-2 py-0.5 rounded">{config.minChunkSize}</span>
-                                    </div>
-                                    <input 
-                                        type="range" min="100" max="1000" step="50"
-                                        value={config.minChunkSize}
-                                        onChange={(e) => updateConfig('minChunkSize', parseInt(e.target.value))}
-                                        className="w-full h-2 bg-surface rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-secondary"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <div className="flex justify-between">
-                                        <label className="text-sm font-medium text-white">Max Chunk Size</label>
-                                        <span className="text-xs font-mono text-secondary bg-secondary/10 px-2 py-0.5 rounded">{config.maxChunkSize}</span>
-                                    </div>
-                                    <input 
-                                        type="range" min="500" max="2000" step="50"
-                                        value={config.maxChunkSize}
-                                        onChange={(e) => updateConfig('maxChunkSize', parseInt(e.target.value))}
-                                        className="w-full h-2 bg-surface rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-secondary"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* 3. NEW: Context Augmentation */}
-                <ConfigSection title="Context Augmentation" icon={BrainCircuit}>
-                    <SelectionCard 
-                        selected={!config.contextAugmentation}
-                        onClick={() => updateConfig('contextAugmentation', false)}
-                        title="Standard Indexing"
-                        description="Fast, direct indexing of chunks. Ideal for well-structured documents."
-                        icon={Zap}
-                    />
-                    <SelectionCard 
-                        selected={config.contextAugmentation}
-                        onClick={() => updateConfig('contextAugmentation', true)}
-                        title="AI Context Enrichment"
-                        description="Uses LLMs to generate hypothetical questions and summaries for every chunk, fixing 'lost context' in split documents."
-                        icon={Sparkles}
-                    />
-                </ConfigSection>
-
-                {/* Warning for Augmentation */}
-                {config.contextAugmentation && (
-                     <div className="mb-8 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-4 animate-fade-in-up">
-                        <div className="p-2 rounded-lg bg-amber-500/20 text-amber-500 shrink-0">
-                            <AlertTriangle className="w-5 h-5" />
-                        </div>
-                        <div>
-                            <h4 className="text-sm font-bold text-amber-200 mb-1">High Latency & Cost Warning</h4>
-                            <p className="text-xs text-amber-200/80 leading-relaxed">
-                                Enabling Context Enrichment will significantly increase processing time and cost. 
-                                The system calls an LLM (e.g., OpenAI) for <strong>every single chunk</strong> to generate metadata. 
-                                Only use this for complex, unstructured documents where standard retrieval fails.
-                            </p>
-                        </div>
-                     </div>
-                )}
-
-                {/* 4. Ingestion Destination */}
-                <ConfigSection title="Destination & Indexing" icon={Database}>
-                    <SelectionCard 
-                        selected={config.destination === 'postgres'}
-                        onClick={() => updateConfig('destination', 'postgres')}
-                        title="PostgreSQL (pgvector)"
-                        description="Relational database with vector extension. Best for hybrid search."
-                        icon={Database}
-                    />
-                    <SelectionCard 
-                        selected={config.destination === 'qdrant'}
-                        onClick={() => updateConfig('destination', 'qdrant')}
-                        title="Qdrant Vector DB"
-                        description="High-performance vector similarity search engine."
-                        icon={Database}
-                        disabled={true}
-                        disabledReason="Temporarily unavailable."
-                    />
-                     <SelectionCard 
-                        selected={config.destination === 'pinecone'}
-                        onClick={() => updateConfig('destination', 'pinecone')}
-                        title="Pinecone"
-                        description="Managed vector database service."
-                        icon={UploadCloud}
-                        disabled={true}
-                        disabledReason="Temporarily unavailable."
-                    />
-                </ConfigSection>
-            </div>
-
-            {/* Footer Actions */}
-            <div className="mt-6 pt-6 border-t border-white/5 flex justify-between items-center">
-                <div className="flex items-center gap-2 text-xs text-text-subtle">
-                    <Shield className="w-4 h-4 text-emerald-500" />
-                    <span>Configuration Validated</span>
-                </div>
-                <div className="flex gap-3">
-                     <Button 
-                        variant="outline" 
-                        onClick={onBack}
-                        disabled={isLoading}
-                        className="border-white/10 hover:bg-white/5 text-text-subtle hover:text-white"
-                    >
-                        Cancel
-                    </Button>
-                    <Button 
-                        variant="primary" 
-                        onClick={() => onStart(config)}
-                        disabled={isLoading}
-                        className="shadow-neon-primary px-8"
-                    >
-                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                        {isLoading ? 'Processing...' : 'Start Ingestion Process'}
-                    </Button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-// --- SharePoint Component ---
-
-interface SharePointItem {
-    id: string;
-    name: string;
-    [key: string]: any;
-}
-
-interface SharePointExplorerProps {
-    notebookId: string;
-    onConfigure: (item: SharePointItem) => void;
-}
-
-const SharePointExplorer: React.FC<SharePointExplorerProps> = ({ notebookId, onConfigure }) => {
-    const [isLoading, setIsLoading] = useState(false);
-    const [items, setItems] = useState<SharePointItem[]>([]);
-    const [selectedId, setSelectedId] = useState<string | null>(null);
-    const [error, setError] = useState<string | null>(null);
-
-    const fetchFolders = async () => {
-        setIsLoading(true);
-        setError(null);
-        try {
-            // STRICT: POST request with EMPTY BODY as required by the webhook for Discovery
-            const response = await fetch(SHAREPOINT_DISCOVERY_WEBHOOK_URL, {
-                method: 'POST',
-                body: null
-            });
-
-            if (!response.ok) {
-                throw new Error(`Failed to fetch folders: ${response.status} ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            
-            let parsedItems: SharePointItem[] = [];
-            if (Array.isArray(data)) {
-                parsedItems = data.map(item => item.json ? item.json : item);
-            } else if (typeof data === 'object' && data) {
-                const list = data.data || data.value || data.folders || data.items || [data];
-                if (Array.isArray(list)) {
-                    parsedItems = list;
-                }
-            }
-
-            const normalizedItems = parsedItems.map(item => ({
-                ...item,
-                id: item.id || item.driveId || item.folderId || item.webUrl || 'unknown_id',
-                name: item.name || item.folderName || item.driveName || item.displayName || 'Untitled Folder'
-            })).filter(item => item.id !== 'unknown_id');
-
-            setItems(normalizedItems);
-            
-            if (normalizedItems.length === 0) {
-                console.warn("Received empty list from SharePoint webhook", data);
-                if (Array.isArray(data) && data.length === 0) {
-                     setError("No folders found (Empty Response).");
-                }
-            }
-
-        } catch (err: any) {
-            console.error("SharePoint fetch error:", err);
-            setError(err.message || "Failed to connect to SharePoint.");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleConfigureClick = () => {
-        if (!selectedId) return;
-        const selectedItem = items.find(i => i.id === selectedId);
-        if (selectedItem) {
-            onConfigure(selectedItem);
-        }
-    };
-
-    const handleCopyId = (e: React.MouseEvent, id: string) => {
-        e.stopPropagation();
-        navigator.clipboard.writeText(id);
-    };
-
-    return (
-        <div className="h-full flex flex-col w-full relative">
-            
-            {/* Header / Connection Status */}
-            <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
-                <div>
-                    <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
-                        <span className="p-1.5 rounded-lg bg-[#0078D4]/20 text-[#0078D4] border border-[#0078D4]/30">
-                            <Share2 className="w-5 h-5" />
-                        </span>
-                        Microsoft SharePoint
-                    </h3>
-                    <p className="text-text-subtle text-sm max-w-lg">
-                        Connect to your organization's SharePoint drives. Select a root folder to recursively index all contained documents.
-                    </p>
-                </div>
-                
-                {items.length > 0 && (
-                     <div className="flex items-center gap-3">
-                        <div className="px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                            <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide">Connected</span>
-                        </div>
-                        <Button 
-                            variant="outline" 
-                            onClick={fetchFolders}
-                            disabled={isLoading}
-                            className="!h-9 !px-3 !text-xs border-white/10 hover:bg-white/5"
-                        >
-                            <RefreshCw className={`w-3.5 h-3.5 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-                            Refresh
-                        </Button>
-                     </div>
-                )}
-            </div>
-
-            {/* Main Content Panel */}
-            <div className="flex-1 bg-surface/30 border border-white/10 rounded-2xl overflow-hidden flex flex-col relative shadow-xl backdrop-blur-sm">
-                
-                {/* Empty State / Initial Connect */}
-                {items.length === 0 && !isLoading && !error && (
-                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-8 text-center bg-gradient-to-b from-[#0A0A0F] to-[#0F0F13]">
-                        <div className="w-20 h-20 rounded-2xl bg-[#0078D4]/10 border border-[#0078D4]/20 flex items-center justify-center mb-6 shadow-[0_0_40px_rgba(0,120,212,0.1)] group">
-                            <Share2 className="w-10 h-10 text-[#0078D4] group-hover:scale-110 transition-transform duration-500" />
-                        </div>
-                        <h4 className="text-xl font-bold text-white mb-2">Connect to Drive</h4>
-                        <p className="text-text-subtle text-sm max-w-sm mb-8 leading-relaxed">
-                            Establish a secure connection to fetch available document libraries and folders from your SharePoint instance.
-                        </p>
-                        <Button 
-                            variant="primary" 
-                            onClick={fetchFolders}
-                            className="!h-12 !px-8 !text-sm bg-[#0078D4] hover:bg-[#006cbd] border-none text-white shadow-[0_0_20px_rgba(0,120,212,0.3)] hover:shadow-[0_0_30px_rgba(0,120,212,0.5)]"
-                        >
-                            Connect & Fetch Folders
-                        </Button>
-                    </div>
-                )}
-
-                {/* Loading State */}
-                {isLoading && (
-                     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
-                        <div className="flex flex-col items-center gap-4 p-8 rounded-2xl bg-[#0F0F13] border border-white/10 shadow-2xl">
-                            <Loader2 className="w-10 h-10 text-[#0078D4] animate-spin" />
-                            <div className="text-center">
-                                <p className="text-sm font-bold text-white">Authenticating...</p>
-                                <p className="text-xs text-text-subtle mt-1">Fetching directory structure</p>
-                            </div>
-                        </div>
-                     </div>
-                )}
-
-                {/* Error State */}
-                {error && (
-                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#0A0A0F]">
-                         <div className="p-4 bg-red-500/10 rounded-full border border-red-500/20 mb-4 animate-pulse">
-                            <AlertCircle className="w-8 h-8 text-red-500" />
-                         </div>
-                         <h4 className="text-lg font-bold text-white mb-2">Connection Failed</h4>
-                         <p className="text-red-400 text-xs bg-red-500/5 px-4 py-2 rounded-lg border border-red-500/10 mb-6 font-mono max-w-md text-center">
-                            {error}
-                         </p>
-                         <Button variant="outline" onClick={fetchFolders} className="border-white/10 hover:bg-white/5">Try Again</Button>
-                    </div>
-                )}
-
-                {/* Folders List */}
-                {items.length > 0 && (
-                    <div className="flex-1 flex flex-col min-h-0">
-                        {/* Toolbar */}
-                        <div className="px-6 py-3 border-b border-white/5 bg-white/[0.02] flex justify-between items-center">
-                            <div className="flex items-center gap-2 text-xs font-bold text-text-subtle uppercase tracking-wider">
-                                <Folder className="w-3.5 h-3.5" />
-                                <span>Directory Listing</span>
-                            </div>
-                            <span className="text-[10px] font-mono text-text-subtle bg-white/5 px-2 py-0.5 rounded border border-white/5">
-                                {items.length} Items Found
-                            </span>
-                        </div>
-
-                        {/* Grid */}
-                        <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                {items.map((item) => {
-                                    const isSelected = selectedId === item.id;
-                                    return (
-                                        <div 
-                                            key={item.id}
-                                            onClick={() => setSelectedId(item.id)}
-                                            className={`group relative p-4 rounded-xl border transition-all duration-200 cursor-pointer flex items-start gap-4 overflow-hidden ${
-                                                isSelected 
-                                                    ? 'bg-[#0078D4]/10 border-[#0078D4]/50 shadow-[0_0_20px_rgba(0,120,212,0.15)]' 
-                                                    : 'bg-[#15151A] border-white/5 hover:border-white/15 hover:bg-[#1A1A20]'
-                                            }`}
-                                        >
-                                            {/* Selection Indicator Bar */}
-                                            {isSelected && <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#0078D4]"></div>}
-
-                                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
-                                                isSelected ? 'bg-[#0078D4] text-white shadow-lg' : 'bg-white/5 text-text-subtle group-hover:text-white group-hover:bg-white/10'
-                                            }`}>
-                                                <Folder className="w-5 h-5" />
-                                            </div>
-                                            
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex justify-between items-start">
-                                                    <h4 className={`text-sm font-bold truncate pr-2 ${isSelected ? 'text-white' : 'text-gray-300 group-hover:text-white'}`}>
-                                                        {item.name}
-                                                    </h4>
-                                                </div>
-                                                
-                                                <div className="mt-2 flex items-center gap-2 group/id">
-                                                    <code className={`px-1.5 py-0.5 rounded border text-[9px] font-mono truncate max-w-[140px] transition-colors ${
-                                                        isSelected ? 'bg-black/30 border-[#0078D4]/30 text-[#0078D4]' : 'bg-black/30 border-white/5 text-text-subtle'
-                                                    }`} title={item.id}>
-                                                        {item.id}
-                                                    </code>
-                                                    <button 
-                                                        onClick={(e) => handleCopyId(e, item.id)}
-                                                        className="opacity-0 group-hover/id:opacity-100 p-1 hover:bg-white/10 rounded text-text-subtle hover:text-white transition-opacity"
-                                                        title="Copy ID"
-                                                    >
-                                                        <Copy className="w-3 h-3" />
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {isSelected && (
-                                                <div className="absolute top-2 right-2">
-                                                    <div className="bg-[#0078D4] rounded-full p-0.5">
-                                                        <Check className="w-3 h-3 text-white" />
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    </div>
-                )}
-                
-                {/* Floating Action Bar */}
-                {selectedId && (
-                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] md:w-auto md:min-w-[400px] z-30 animate-fade-in-up">
-                        <div className="bg-[#0F0F13]/90 backdrop-blur-xl border border-white/10 p-2 pl-4 rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.8)] flex items-center justify-between gap-6 ring-1 ring-white/5">
-                            <div className="flex flex-col min-w-0">
-                                <span className="text-[10px] text-text-subtle uppercase font-bold tracking-wider">Folder Selected</span>
-                                <span className="text-xs font-mono text-white truncate max-w-[200px]">{items.find(i => i.id === selectedId)?.name}</span>
-                            </div>
-                            <Button 
-                                variant="primary" 
-                                onClick={handleConfigureClick}
-                                className="!h-10 !px-6 !text-xs bg-[#0078D4] hover:bg-[#006cbd] border-none text-white shadow-[0_0_15px_rgba(0,120,212,0.4)] whitespace-nowrap"
-                            >
-                                <Settings className="w-4 h-4 mr-2" />
-                                Configure Ingestion
-                            </Button>
-                        </div>
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-};
-
-// --- Ingestion Page Component ---
-
-type IngestType = 'computer' | 'text' | 'sharepoint';
-
-interface IngestPageProps {
-    onBack: () => void;
-    notebookId: string;
-    notebookName: string;
-    notebookDescription: string;
-    notebookSettings: NotebookConfig;
-}
-
-const IngestPage: React.FC<IngestPageProps> = ({ onBack, notebookId, notebookName, notebookDescription, notebookSettings }) => {
-    const [activeType, setActiveType] = useState<IngestType>('computer');
-    const [dragActive, setDragActive] = useState(false);
-    
-    // Ingestion Data State
-    const [textTitle, setTextTitle] = useState('');
-    const [textContent, setTextContent] = useState('');
-    const [selectedFile, setSelectedFile] = useState<File | null>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
-
-    // Flow State
-    const [configMode, setConfigMode] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [pendingSource, setPendingSource] = useState<{ 
-        type: IngestType, 
-        data: any 
-    } | null>(null);
-
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            setSelectedFile(e.target.files[0]);
-        }
-    };
-
-    // --- Step 1: Pre-Check and Move to Config ---
-
-    const handleConfigureText = () => {
-        if (!textTitle || !textContent) return;
-        setPendingSource({
-            type: 'text',
-            data: { title: textTitle, content: textContent }
-        });
-        setConfigMode(true);
-    };
-
-    const handleConfigureFile = () => {
-        if (!selectedFile) return;
-        setPendingSource({
-            type: 'computer',
-            data: { file: selectedFile }
-        });
-        setConfigMode(true);
-    };
-
-    const handleConfigureSharePoint = (item: SharePointItem) => {
-        setPendingSource({
-            type: 'sharepoint',
-            data: { id: item.id, name: item.name }
-        });
-        setConfigMode(true);
-    };
-
-    // --- Helper: Convert File to Base64 ---
-    const fileToBase64 = (file: File): Promise<string> => {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = error => reject(error);
-        });
-    };
-
-    // --- Step 2: Final Execution ---
-
-    const handleFinalIngest = async (ingestionConfig: IngestionConfig) => {
-        if (!pendingSource) return;
-        setIsProcessing(true);
-
-        try {
-            // Mappings for UI Names
-            const PARSER_NAMES: Record<string, string> = {
-                'n8n_basic': 'Basic Extractor',
-                'llamaindex': 'LlamaParse',
-                'mistral_ocr': 'Mistral OCR',
-                'docling': 'Docling Parser',
-                'gemini_ocr': 'Gemini OCR'
-            };
-
-            const CHUNKER_NAMES: Record<string, string> = {
-                'code_node': 'Recursive Text Splitter',
-                'agentic': 'Agentic Chunking',
-                'docling': 'Docling Chunker'
-            };
-
-            const DESTINATION_NAMES: Record<string, string> = {
-                'postgres': 'PostgreSQL (pgvector)',
-                'qdrant': 'Qdrant Vector DB',
-                'pinecone': 'Pinecone'
-            };
-
-            const METHOD_NAMES: Record<string, string> = {
-                'computer': 'computer upload',
-                'text': 'text',
-                'sharepoint': 'SharePoint'
-            };
-
-            // Flattened, Explicit Payload Structure
+            // Flat Payload Structure as requested
             let payload: any = {
-                // 1. Notebook Identity
                 notebook_id: notebookId,
                 notebook_name: notebookName,
-                notebook_description: notebookDescription,
+                notebook_description: notebookDescription || '',
+                embedding_model: config.embeddingModel || 'text-embedding-3-small',
+                inference_provider: config.inference.provider,
+                inference_model: config.inference.model,
+                inference_temperature: config.inference.temperature,
 
-                // 2. Notebook Settings (from Settings Page)
-                embedding_model: notebookSettings.embeddingModel,
-                inference_provider: notebookSettings.inference.provider,
-                inference_model: notebookSettings.inference.model,
-                inference_temperature: notebookSettings.inference.temperature,
+                ingestion_method: ingestionMethodMap[sourceType || 'local'] || sourceType,
                 
-                // 3. Ingestion Method
-                ingestion_method: METHOD_NAMES[pendingSource.type],
+                config_parser_mode: parserModeMap[parsingMethod] || parsingMethod,
+                config_chunking_mode: chunkingModeMap[chunkingMethod] || chunkingMethod,
+                config_destination: destinationMap[destination] || destination,
+                config_enable_context_augmentation: augmentation === 'enrichment',
                 
-                // 4. Ingestion Config (Mapped to UI Names)
-                config_parser_mode: PARSER_NAMES[ingestionConfig.parser],
-                config_chunking_mode: CHUNKER_NAMES[ingestionConfig.chunker],
-                config_destination: DESTINATION_NAMES[ingestionConfig.destination],
-                config_enable_context_augmentation: ingestionConfig.contextAugmentation === true,
+                recursive_chunk_size: chunkSize,
+                recursive_chunk_overlap: overlap,
+                recursive_separators: ["\n\n", "\n", ". ", " ", ""],
                 
-                // 5. Recursive Chunking Params
-                recursive_chunk_size: ingestionConfig.chunkSize,
-                recursive_chunk_overlap: ingestionConfig.chunkOverlap,
-                recursive_separators: ingestionConfig.separators,
+                agentic_model: config.inference.model,
+                agentic_instructions: agenticInstructions,
+                agentic_min_size: 300,
+                agentic_max_size: 800,
 
-                // 6. Agentic Chunking Params
-                agentic_model: ingestionConfig.agenticModel,
-                agentic_instructions: ingestionConfig.splitInstructions,
-                agentic_min_size: ingestionConfig.minChunkSize,
-                agentic_max_size: ingestionConfig.maxChunkSize,
+                batch_processing_size: batchSize,
+                contextual_batch_processing_size: contextBatchSize,
                 
                 timestamp: new Date().toISOString(),
+                action: sourceType === 'sharepoint' ? "process_sharepoint_folder" : "ingest",
+                orchestrator_id: ORCHESTRATOR_ID,
+                files: [] as any[]
             };
 
-            // 7. Source Data Injection
-            if (pendingSource.type === 'text') {
-                payload = {
-                    ...payload,
-                    action: 'ingest_raw_text',
-                    text_title: pendingSource.data.title,
-                    text_content: pendingSource.data.content
-                };
-            } else if (pendingSource.type === 'computer') {
-                // Convert file to base64 for JSON transmission
-                const base64Content = await fileToBase64(pendingSource.data.file);
+            if (sourceType === 'sharepoint') {
+                const selectedFiles = discoveredFiles.filter(f => selectedFileIds.has(f.id));
+                payload.files = selectedFiles;
                 
-                payload = {
-                    ...payload,
-                    action: 'ingest_file',
-                    file_name: pendingSource.data.file.name,
-                    file_size: pendingSource.data.file.size,
-                    file_type: pendingSource.data.file.type,
-                    file_content_base64: base64Content
-                };
-            } else if (pendingSource.type === 'sharepoint') {
-                payload = {
-                    ...payload,
-                    action: 'process_sharepoint_folder',
-                    sharepoint_folder_id: pendingSource.data.id,
-                    sharepoint_folder_name: pendingSource.data.name
-                };
+                // Add first selected item as root params to match specific user request pattern
+                if (selectedFiles.length > 0) {
+                    payload.sharepoint_folder_id = selectedFiles[0].id;
+                    payload.sharepoint_folder_name = selectedFiles[0].name;
+                }
+            } else {
+                const filePromises = localFiles.map(file => {
+                    return new Promise<any>((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.readAsDataURL(file);
+                        reader.onload = () => resolve({
+                            name: file.name,
+                            type: file.type,
+                            size: file.size,
+                            content: reader.result // Base64
+                        });
+                        reader.onerror = error => reject(error);
+                    });
+                });
+
+                const filesWithContent = await Promise.all(filePromises);
+                payload.files = filesWithContent;
             }
 
-            console.log("🚀 Sending Ingestion Payload:", payload);
-
-            // POST with application/json
             const response = await fetch(INGESTION_WEBHOOK_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -976,511 +1061,890 @@ const IngestPage: React.FC<IngestPageProps> = ({ onBack, notebookId, notebookNam
             });
 
             if (response.ok) {
-                alert(`Ingestion started successfully for ${METHOD_NAMES[pendingSource.type].toUpperCase()} source.`);
-                // Reset UI
-                setConfigMode(false);
-                setPendingSource(null);
-                setTextTitle('');
-                setTextContent('');
-                setSelectedFile(null);
-                if (fileInputRef.current) fileInputRef.current.value = '';
+                // Immediately return to docs page and refresh
+                onClose();
+                onIngestionStarted();
             } else {
-                throw new Error(`Server status: ${response.status}`);
+                alert("Ingestion trigger failed.");
             }
-
-        } catch (error: any) {
-            console.error('Ingest Error:', error);
-            alert(`Failed to start ingestion: ${error.message}`);
+        } catch (e) {
+            console.error("Ingestion error", e);
+            alert("Error starting ingestion.");
         } finally {
-            setIsProcessing(false);
+            setIsLoading(false);
         }
     };
 
-    // Render Config Mode
-    if (configMode) {
-        return (
-            <IngestionSettings 
-                onBack={() => setConfigMode(false)}
-                onStart={handleFinalIngest}
-                isLoading={isProcessing}
-            />
-        );
-    }
-
-    // Render Source Selection Mode
-    return (
-        <div className="h-full flex flex-col animate-fade-in">
-            {/* Page Header */}
-            <div className="flex items-center justify-between mb-8">
-                <div className="flex items-center gap-4">
-                    <button 
-                        onClick={onBack}
-                        className="w-10 h-10 rounded-full bg-surface border border-white/10 flex items-center justify-center text-text-subtle hover:text-white hover:border-primary/30 transition-all hover:-translate-x-1"
-                    >
-                        <ArrowLeft className="w-5 h-5" />
-                    </button>
-                    <div>
-                        <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                            Ingest Documents
-                        </h2>
-                        <p className="text-text-subtle text-sm mt-1">Add knowledge to your RAG context from various sources.</p>
-                    </div>
+    return createPortal(
+        <div className="fixed inset-0 z-[100] bg-[#050508] animate-fade-in flex flex-col">
+            
+            {/* Header */}
+            <div className="h-20 border-b border-white/5 flex justify-between items-center px-8 bg-surface/50 backdrop-blur-xl shrink-0">
+                <div>
+                    <h2 className="text-xl font-bold text-white flex items-center gap-3">
+                        {step === 'settings' ? 'Configure Ingestion' : 'Add New File'}
+                        {step === 'settings' && (
+                            <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded border border-primary/20 uppercase tracking-wider font-bold">Step 3/3</span>
+                        )}
+                        {(step === 'discovery' || step === 'local_select') && (
+                            <span className="text-xs bg-white/10 text-text-subtle px-2 py-0.5 rounded border border-white/10 uppercase tracking-wider font-bold">Step 2/3</span>
+                        )}
+                        {step === 'source' && (
+                            <span className="text-xs bg-white/10 text-text-subtle px-2 py-0.5 rounded border border-white/10 uppercase tracking-wider font-bold">Step 1/3</span>
+                        )}
+                    </h2>
+                    <p className="text-sm text-text-subtle">
+                        {step === 'settings' ? 'Tune parsing and chunking parameters.' : 'Import documents into your notebook context.'}
+                    </p>
                 </div>
+                <button onClick={onClose} className="p-2.5 rounded-xl hover:bg-white/5 text-text-subtle hover:text-white transition-colors border border-transparent hover:border-white/10">
+                    <X className="w-5 h-5" />
+                </button>
             </div>
 
-            <div className="flex-1 bg-[#0E0E12] border border-white/10 rounded-2xl shadow-2xl flex flex-col md:flex-row overflow-hidden">
-                
-                {/* Source Selection Sidebar */}
-                <div className="w-full md:w-72 bg-[#0A0A0F] border-r border-white/5 p-4 flex flex-col gap-2 relative z-10">
-                    <div className="text-[10px] font-bold text-text-subtle uppercase tracking-wider mb-4 px-2 mt-2 opacity-50">Select Source</div>
-                    
-                    {[
-                        { id: 'computer', icon: HardDrive, label: 'From Computer', sub: 'Upload Local Files', color: 'text-primary', activeBorder: 'border-primary', activeBg: 'bg-primary/10' },
-                        { id: 'text', icon: Type, label: 'Raw Text', sub: 'Paste & Edit', color: 'text-secondary', activeBorder: 'border-secondary', activeBg: 'bg-secondary/10' },
-                        { id: 'sharepoint', icon: Share2, label: 'SharePoint', sub: 'Microsoft Graph', color: 'text-[#0078D4]', activeBorder: 'border-[#0078D4]', activeBg: 'bg-[#0078D4]/10' }
-                    ].map((item) => (
-                        <button 
-                            key={item.id}
-                            onClick={() => setActiveType(item.id as IngestType)}
-                            className={`group flex items-center gap-4 px-4 py-4 rounded-xl text-sm transition-all text-left relative overflow-hidden ${
-                                activeType === item.id 
-                                    ? `${item.activeBg} border ${item.activeBorder} shadow-lg` 
-                                    : 'bg-white/[0.02] border border-transparent hover:bg-white/5 hover:border-white/5'
-                            }`}
-                        >
-                            {/* Icon Container */}
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border transition-all ${
-                                activeType === item.id 
-                                    ? `bg-surface border-${item.color.split('-')[1]}/30 ${item.color}` 
-                                    : 'bg-white/5 border-white/5 text-text-subtle group-hover:text-white group-hover:bg-white/10'
-                            }`}>
-                                <item.icon className="w-5 h-5" />
-                            </div>
-                            
-                            <div className="flex flex-col z-10">
-                                <span className={`font-bold transition-colors ${activeType === item.id ? 'text-white' : 'text-text-subtle group-hover:text-white'}`}>{item.label}</span>
-                                <span className="text-[10px] font-normal opacity-70">{item.sub}</span>
-                            </div>
-
-                            {/* Active Glow */}
-                            {activeType === item.id && (
-                                <div className={`absolute -right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-current opacity-20 blur-xl rounded-full pointer-events-none ${item.color}`}></div>
-                            )}
-                        </button>
-                    ))}
-                    
-                    {/* Security Badge */}
-                    <div className="mt-auto p-4 rounded-xl bg-surface/30 border border-white/5 flex items-center gap-3">
-                         <Shield className="w-8 h-8 text-emerald-500/50" />
-                         <div>
-                             <div className="text-[10px] font-bold text-white mb-0.5">Secure Transfer</div>
-                             <div className="text-[9px] text-text-subtle leading-tight">All uploads are encrypted and processed in sovereign cloud.</div>
-                         </div>
-                    </div>
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar relative">
+                {/* Background decoration */}
+                <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                     <div className="absolute top-[-20%] right-[-10%] w-[600px] h-[600px] bg-primary/5 blur-[120px] rounded-full mix-blend-screen"></div>
+                     <div className="absolute bottom-[-20%] left-[-10%] w-[500px] h-[500px] bg-secondary/5 blur-[100px] rounded-full mix-blend-screen"></div>
                 </div>
 
-                {/* Content Area */}
-                <div className="flex-1 p-8 bg-[#0F0F13] overflow-y-auto custom-scrollbar relative flex flex-col">
+                <div className={`max-w-7xl mx-auto p-8 md:p-12 min-h-full flex flex-col relative z-10 ${step === 'settings' ? '' : 'justify-center'}`}>
                     
-                    {/* Dynamic Background Grid */}
-                    <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808005_1px,transparent_1px),linear-gradient(to_bottom,#80808005_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none"></div>
+                    {/* STEP 1: SOURCE SELECTION */}
+                    {step === 'source' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-4xl mx-auto w-full">
+                            <button 
+                                onClick={handleDiscoverSharePoint}
+                                className="group p-10 rounded-3xl border border-white/10 bg-surface/50 backdrop-blur-sm hover:bg-surface-highlight hover:border-primary/50 transition-all flex flex-col items-center text-center gap-6 relative overflow-hidden shadow-2xl hover:shadow-[0_0_40px_-10px_rgba(126,249,255,0.2)]"
+                            >
+                                <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                <div className="w-20 h-20 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform relative z-10 border border-blue-500/20">
+                                    <Share2 className="w-10 h-10" />
+                                </div>
+                                <div className="relative z-10">
+                                    <h3 className="text-2xl font-bold text-white mb-2">SharePoint</h3>
+                                    <p className="text-sm text-text-subtle max-w-xs mx-auto">Connect to your organization's document libraries and sync folders directly.</p>
+                                </div>
+                            </button>
 
-                    {/* Option 1: Computer */}
-                    {activeType === 'computer' && (
-                        <div className="h-full flex flex-col max-w-2xl mx-auto w-full relative z-10 justify-center">
-                            {!selectedFile ? (
-                                <div 
-                                    className={`relative group border-2 border-dashed rounded-3xl flex flex-col items-center justify-center p-12 transition-all duration-300 min-h-[400px] cursor-pointer
-                                        ${dragActive 
-                                            ? 'border-primary bg-primary/5 scale-[0.99] shadow-[0_0_50px_rgba(126,249,255,0.1)]' 
-                                            : 'border-white/10 hover:border-primary/50 hover:bg-surface/50'
-                                        }`}
-                                    onDragEnter={() => setDragActive(true)}
-                                    onDragLeave={() => setDragActive(false)}
-                                    onClick={() => fileInputRef.current?.click()}
-                                >
-                                    <div className={`w-24 h-24 rounded-full flex items-center justify-center mb-8 transition-all duration-500
-                                        ${dragActive ? 'bg-primary/20 scale-110' : 'bg-surface border border-white/10 shadow-2xl group-hover:scale-105 group-hover:border-primary/30'}
-                                    `}>
-                                        <UploadCloud className={`w-10 h-10 transition-colors ${dragActive ? 'text-primary' : 'text-text-subtle group-hover:text-primary'}`} />
-                                    </div>
-                                    
-                                    <h3 className="text-2xl font-bold text-white mb-3">Drop file to upload</h3>
-                                    <p className="text-text-subtle text-sm text-center max-w-xs mb-8 leading-relaxed">
-                                        Drag & drop your document here, or click to browse files from your computer.
-                                    </p>
-                                    
-                                    <div className="flex items-center gap-3">
-                                        <span className="px-3 py-1 rounded bg-white/5 border border-white/10 text-[10px] font-mono text-text-subtle">PDF</span>
-                                        <span className="px-3 py-1 rounded bg-white/5 border border-white/10 text-[10px] font-mono text-text-subtle">DOCX</span>
-                                        <span className="px-3 py-1 rounded bg-white/5 border border-white/10 text-[10px] font-mono text-text-subtle">TXT</span>
-                                        <span className="px-3 py-1 rounded bg-white/5 border border-white/10 text-[10px] font-mono text-text-subtle">CSV</span>
-                                    </div>
+                            <button 
+                                onClick={handleLocalSelect}
+                                className="group p-10 rounded-3xl border border-white/10 bg-surface/50 backdrop-blur-sm hover:bg-surface-highlight hover:border-secondary/50 transition-all flex flex-col items-center text-center gap-6 relative overflow-hidden shadow-2xl hover:shadow-[0_0_40px_-10px_rgba(224,59,138,0.2)]"
+                            >
+                                <div className="absolute inset-0 bg-secondary/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                <div className="w-20 h-20 rounded-full bg-secondary/10 flex items-center justify-center text-secondary group-hover:scale-110 transition-transform relative z-10 border border-secondary/20">
+                                    <Upload className="w-10 h-10" />
+                                </div>
+                                <div className="relative z-10">
+                                    <h3 className="text-2xl font-bold text-white mb-2">Local Upload</h3>
+                                    <p className="text-sm text-text-subtle max-w-xs mx-auto">Upload PDF, DOCX, TXT files securely from your computer.</p>
+                                </div>
+                            </button>
+                        </div>
+                    )}
 
-                                    <input 
-                                        type="file" 
-                                        ref={fileInputRef}
-                                        onChange={handleFileChange} 
-                                        className="hidden" 
-                                    />
+                    {/* STEP 2A: SHAREPOINT DISCOVERY */}
+                    {step === 'discovery' && (
+                        <div className="space-y-6 max-w-4xl mx-auto w-full">
+                            {isLoading ? (
+                                <div className="flex flex-col items-center justify-center h-96 gap-6">
+                                    <div className="relative">
+                                        <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full animate-pulse"></div>
+                                        <Loader2 className="w-16 h-16 text-primary animate-spin relative z-10" />
+                                    </div>
+                                    <p className="text-lg font-medium text-white animate-pulse">Scanning SharePoint Library...</p>
+                                </div>
+                            ) : discoveredFiles.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-96 gap-6 text-center border border-dashed border-white/10 rounded-3xl bg-surface/20">
+                                    <FolderOpen className="w-16 h-16 text-text-subtle opacity-50" />
+                                    <div>
+                                        <p className="text-lg font-bold text-white mb-2">No compatible files found</p>
+                                        <p className="text-sm text-text-subtle">Please check your connection or permissions.</p>
+                                    </div>
+                                    <Button variant="outline" onClick={() => setStep('source')} className="border-white/10">Back to Sources</Button>
                                 </div>
                             ) : (
-                                <div className="flex flex-col items-center justify-center min-h-[400px] animate-fade-in-up">
-                                    <div className="w-full max-w-md bg-surface border border-white/10 rounded-3xl p-8 shadow-2xl relative overflow-hidden group">
-                                        {/* Glow Effect */}
-                                        <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 blur-[50px] rounded-full pointer-events-none"></div>
-
-                                        <div className="flex items-start gap-5 mb-8">
-                                            <div className="w-16 h-16 bg-[#1A1A21] rounded-2xl flex items-center justify-center border border-white/5 shadow-inner shrink-0">
-                                                <FileIcon className="w-8 h-8 text-primary" />
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center bg-surface/50 p-4 rounded-xl border border-white/5 backdrop-blur-sm">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400">
+                                                <Cloud className="w-5 h-5" />
                                             </div>
                                             <div>
-                                                <h3 className="text-lg font-bold text-white mb-1 line-clamp-2">{selectedFile.name}</h3>
-                                                <div className="flex items-center gap-3 text-text-subtle text-xs">
-                                                    <span className="font-mono">{(selectedFile.size / 1024).toFixed(2)} KB</span>
-                                                    <span className="w-1 h-1 rounded-full bg-white/20"></span>
-                                                    <span className="uppercase">{selectedFile.name.split('.').pop()}</span>
-                                                </div>
+                                                <span className="block text-sm font-bold text-white">SharePoint Library</span>
+                                                <span className="text-xs text-text-subtle">Select files to ingest</span>
                                             </div>
                                         </div>
-
-                                        <div className="space-y-3">
-                                            <Button 
-                                                variant="primary" 
-                                                onClick={handleConfigureFile}
-                                                className="w-full !h-12 !text-sm shadow-neon-primary"
-                                            >
-                                                <Settings className="w-4 h-4 mr-2" />
-                                                Next: Configure Ingestion
-                                            </Button>
-                                            <Button 
-                                                variant="outline" 
-                                                className="w-full !h-12 !text-sm border-white/10 hover:bg-white/5 text-text-subtle hover:text-white" 
-                                                onClick={() => { setSelectedFile(null); if(fileInputRef.current) fileInputRef.current.value = ''; }}
-                                            >
-                                                Cancel
-                                            </Button>
+                                        <div className="px-3 py-1 rounded-lg bg-primary/10 border border-primary/20 text-primary text-xs font-mono font-bold">
+                                            {selectedFileIds.size} Selected
                                         </div>
+                                    </div>
+                                    <div className="border border-white/10 rounded-2xl overflow-hidden bg-surface/30 max-h-[500px] overflow-y-auto custom-scrollbar">
+                                        {discoveredFiles.map(file => {
+                                            const isSelected = selectedFileIds.has(file.id);
+                                            return (
+                                                <div 
+                                                    key={file.id} 
+                                                    onClick={() => toggleSelection(file.id)}
+                                                    className={`flex items-center gap-4 p-4 border-b border-white/5 last:border-0 cursor-pointer transition-colors ${isSelected ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-white/5'}`}
+                                                >
+                                                    <div className={`shrink-0 transition-colors ${isSelected ? 'text-primary' : 'text-text-subtle'}`}>
+                                                        {isSelected ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+                                                    </div>
+                                                    <div className="w-10 h-10 rounded-lg bg-surface border border-white/5 flex items-center justify-center text-text-subtle shrink-0">
+                                                        {file.type === 'folder' ? <FolderOpen className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className={`text-sm font-medium truncate ${isSelected ? 'text-white' : 'text-text-subtle'}`}>{file.name}</div>
+                                                        <div className="text-xs text-text-subtle/50">{file.size}</div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}
                         </div>
                     )}
 
-                    {/* Option 2: Raw Text */}
-                    {activeType === 'text' && (
-                        <div className="h-full flex flex-col gap-6 max-w-3xl mx-auto w-full relative z-10">
-                             <div className="mb-2">
-                                <h3 className="text-xl font-bold text-white mb-2">Raw Text Editor</h3>
-                                <p className="text-text-subtle text-sm">Paste content directly. Useful for quick notes, code snippets, or unformatted data.</p>
-                            </div>
-                            
-                            <div className="space-y-6">
-                                <div>
-                                    <label className="text-xs font-bold text-text-subtle uppercase tracking-wider mb-2 block flex items-center gap-2">
-                                        Document Title
-                                        <span className="text-secondary">*</span>
-                                    </label>
-                                    <input 
-                                        type="text" 
-                                        value={textTitle}
-                                        onChange={(e) => setTextTitle(e.target.value)}
-                                        placeholder="e.g. System Architecture Constraints" 
-                                        className="w-full bg-[#0A0A0F] border border-white/10 rounded-xl px-5 py-4 text-white focus:border-secondary/50 focus:outline-none transition-colors shadow-inner text-sm font-medium"
-                                    />
+                    {/* STEP 2B: LOCAL SELECTION */}
+                    {step === 'local_select' && (
+                        <div className="space-y-8 max-w-4xl mx-auto w-full">
+                            <div className="border-2 border-dashed border-white/10 rounded-3xl bg-surface/20 p-12 flex flex-col items-center justify-center text-center hover:border-primary/30 hover:bg-surface/30 transition-all group cursor-pointer relative h-64">
+                                <input 
+                                    type="file" 
+                                    multiple 
+                                    className="absolute inset-0 opacity-0 cursor-pointer"
+                                    onChange={handleLocalFileChange}
+                                />
+                                <div className="w-20 h-20 rounded-full bg-surface border border-white/10 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-xl">
+                                    <FileUp className="w-8 h-8 text-secondary" />
                                 </div>
-                                <div className="flex-1 flex flex-col h-[400px]">
-                                    <label className="text-xs font-bold text-text-subtle uppercase tracking-wider mb-2 block flex items-center gap-2">
-                                        Content Body
-                                        <span className="text-secondary">*</span>
-                                    </label>
-                                    <div className="relative flex-1 group">
-                                        <textarea 
-                                            value={textContent}
-                                            onChange={(e) => setTextContent(e.target.value)}
-                                            placeholder="// Paste text content here..." 
-                                            className="w-full h-full bg-[#0A0A0F] border border-white/10 rounded-xl px-5 py-5 text-gray-300 focus:border-secondary/50 focus:outline-none transition-colors resize-none font-mono text-xs leading-relaxed shadow-inner"
-                                            spellCheck={false}
-                                        />
-                                        <div className="absolute bottom-4 right-4 text-[10px] text-text-subtle/50 font-mono">
-                                            {textContent.length} chars
-                                        </div>
-                                    </div>
-                                </div>
+                                <h3 className="text-xl font-bold text-white mb-2">Drag & Drop or Click to Upload</h3>
+                                <p className="text-sm text-text-subtle max-w-sm">Support for PDF, DOCX, TXT, MD, CSV. Max 50MB per file.</p>
                             </div>
 
-                            <div className="flex justify-end pt-4 border-t border-white/5">
-                                <Button 
-                                    variant="secondary" 
-                                    className="!h-12 px-8 disabled:opacity-50 shadow-neon-secondary"
-                                    onClick={handleConfigureText}
-                                    disabled={!textTitle || !textContent}
-                                >
-                                    <ArrowRight className="w-4 h-4 mr-2" />
-                                    Next: Configure Ingestion
-                                </Button>
-                            </div>
+                            {localFiles.length > 0 && (
+                                <div className="space-y-4 animate-fade-in-up">
+                                     <div className="flex justify-between items-center px-2">
+                                        <span className="text-sm font-bold text-text-subtle uppercase tracking-wider">Ready to Upload</span>
+                                        <span className="text-xs font-bold bg-secondary/10 text-secondary px-2 py-1 rounded border border-secondary/20">{localFiles.length} Files</span>
+                                    </div>
+                                    <div className="border border-white/10 rounded-2xl overflow-hidden bg-surface/30">
+                                        {localFiles.map((file, idx) => (
+                                            <div key={idx} className="flex items-center justify-between p-4 border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors">
+                                                 <div className="flex items-center gap-4">
+                                                    <div className="w-10 h-10 rounded-lg bg-surface border border-white/5 flex items-center justify-center text-text-subtle">
+                                                        <FileText className="w-5 h-5" />
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-sm font-medium text-white">{file.name}</div>
+                                                        <div className="text-xs text-text-subtle/50">{(file.size / 1024).toFixed(1)} KB</div>
+                                                    </div>
+                                                 </div>
+                                                 <button onClick={() => removeLocalFile(idx)} className="p-2 rounded-lg hover:bg-white/10 text-text-subtle hover:text-red-400 transition-colors">
+                                                     <X className="w-5 h-5" />
+                                                 </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
-                    {/* Option 3: SharePoint */}
-                    {activeType === 'sharepoint' && (
-                        <div className="h-full relative z-10 flex flex-col">
-                            <SharePointExplorer 
-                                notebookId={notebookId} 
-                                onConfigure={handleConfigureSharePoint}
-                            />
+                    {/* STEP 3: SETTINGS CONFIGURATION */}
+                    {step === 'settings' && (
+                        <div className="space-y-12 animate-fade-in-up w-full">
+
+                            {/* Source Summary Card */}
+                            <div className="bg-surface/30 backdrop-blur-md border border-white/10 rounded-2xl p-6 flex items-center justify-between shadow-lg">
+                                <div className="flex items-center gap-6">
+                                    <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-surface to-black border border-white/10 flex items-center justify-center shadow-inner">
+                                        {sourceType === 'sharepoint' ? <Share2 className="w-7 h-7 text-blue-400" /> : <Upload className="w-7 h-7 text-secondary" />}
+                                    </div>
+                                    <div>
+                                        <h4 className="text-lg font-bold text-white">
+                                            {sourceType === 'sharepoint' ? 'SharePoint Ingestion' : 'Local File Upload'}
+                                        </h4>
+                                        <p className="text-sm text-text-subtle mt-1">
+                                            {sourceType === 'sharepoint' 
+                                                ? `${selectedFileIds.size} files ready for processing` 
+                                                : `${localFiles.length} files ready for upload`
+                                            }
+                                        </p>
+                                    </div>
+                                </div>
+                                <Button 
+                                    variant="outline" 
+                                    onClick={() => setStep(sourceType === 'sharepoint' ? 'discovery' : 'local_select')}
+                                    className="!h-10 !px-5 text-xs border-white/10 hover:bg-white/5 backdrop-blur-md"
+                                >
+                                    Change Files
+                                </Button>
+                            </div>
+                            
+                            {/* Parsing Strategy */}
+                            <section className="space-y-6">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 rounded-xl bg-surface border border-white/10 shadow-sm">
+                                        <ScanText className="w-5 h-5 text-primary" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-white">Parsing Strategy</h3>
+                                        <p className="text-xs text-text-subtle">Choose how to extract text from your documents.</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <SelectionCard 
+                                        icon={FileText}
+                                        title="Basic Extractor"
+                                        description="Simple text/HTML extraction using standard n8n nodes. Best for simple files."
+                                        selected={parsingMethod === 'text'}
+                                        onClick={() => setParsingMethod('text')}
+                                    />
+                                    <SelectionCard 
+                                        icon={Settings2}
+                                        title="LlamaParse"
+                                        description="Advanced parsing for complex PDFs with tables and figures."
+                                        selected={parsingMethod === 'layout'}
+                                        onClick={() => setParsingMethod('layout')}
+                                    />
+                                    <SelectionCard 
+                                        icon={ScanText}
+                                        title="Mistral OCR"
+                                        description="High-fidelity optical character recognition for scanned documents."
+                                        selected={parsingMethod === 'ocr'}
+                                        onClick={() => setParsingMethod('ocr')}
+                                    />
+                                    <SelectionCard 
+                                        icon={Sparkles}
+                                        title="Gemini OCR"
+                                        description="Multimodal parsing using Google Gemini Vision capabilities."
+                                        selected={parsingMethod === 'gemini_ocr'}
+                                        onClick={() => setParsingMethod('gemini_ocr')}
+                                    />
+                                    <SelectionCard 
+                                        icon={FileType}
+                                        title="Docling Parser"
+                                        description="Specialized layout analysis and structure extraction."
+                                        selected={parsingMethod === 'docling'}
+                                        onClick={() => setParsingMethod('docling')}
+                                        disabled={true}
+                                        badge="Resource heavy. Requires GPU upgrade. Coming soon."
+                                    />
+                                </div>
+                            </section>
+
+                            {/* Chunking Strategy */}
+                            <section className="space-y-6">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 rounded-xl bg-surface border border-white/10 shadow-sm">
+                                        <Code className="w-5 h-5 text-secondary" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-white">Chunking Strategy</h3>
+                                        <p className="text-xs text-text-subtle">Define how documents are split into vectors.</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <SelectionCard 
+                                        icon={Code}
+                                        title="Recursive Text Splitter"
+                                        description="Standard splitting using separators and overlap."
+                                        selected={chunkingMethod === 'recursive'}
+                                        onClick={() => setChunkingMethod('recursive')}
+                                    />
+                                    <SelectionCard 
+                                        icon={Brain}
+                                        title="Agentic Chunking"
+                                        description="Semantic splitting based on content meaning and context boundaries."
+                                        selected={chunkingMethod === 'agentic'}
+                                        onClick={() => setChunkingMethod('agentic')}
+                                    />
+                                    <SelectionCard 
+                                        icon={FileType}
+                                        title="Docling Chunker"
+                                        description="Hierarchical chunking preserving document structure."
+                                        selected={chunkingMethod === 'docling'}
+                                        onClick={() => setChunkingMethod('docling')}
+                                        disabled={true}
+                                        badge="Resource heavy. Requires GPU upgrade. Coming soon."
+                                    />
+                                </div>
+
+                                {/* Parameters */}
+                                {chunkingMethod === 'recursive' && (
+                                    <div className="mt-6 p-8 bg-surface/30 backdrop-blur-md border border-white/5 rounded-2xl animate-fade-in-up">
+                                        <div className="flex items-center gap-2 mb-6 pb-4 border-b border-white/5">
+                                            <ChevronRight className="w-4 h-4 text-text-subtle" />
+                                            <span className="text-xs font-bold text-text-subtle uppercase tracking-wider">Recursive Splitter Parameters</span>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                                            <div className="space-y-4">
+                                                <div className="flex justify-between items-center">
+                                                    <label className="text-sm font-bold text-white">Chunk Size</label>
+                                                    <span className="text-xs font-mono text-primary bg-primary/10 px-3 py-1 rounded border border-primary/20">{chunkSize}</span>
+                                                </div>
+                                                <input 
+                                                    type="range" min="100" max="4000" step="100"
+                                                    value={chunkSize} onChange={(e) => setChunkSize(Number(e.target.value))}
+                                                    className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:shadow-lg hover:[&::-webkit-slider-thumb]:scale-110 transition-all"
+                                                />
+                                                <p className="text-xs text-text-subtle leading-relaxed">Target characters per chunk. Smaller chunks improve retrieval precision but may lose context.</p>
+                                            </div>
+                                            <div className="space-y-4">
+                                                <div className="flex justify-between items-center">
+                                                    <label className="text-sm font-bold text-white">Chunk Overlap</label>
+                                                    <span className="text-xs font-mono text-secondary bg-secondary/10 px-3 py-1 rounded border border-secondary/20">{overlap}</span>
+                                                </div>
+                                                <input 
+                                                    type="range" min="0" max="1000" step="50"
+                                                    value={overlap} onChange={(e) => setOverlap(Number(e.target.value))}
+                                                    className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-secondary [&::-webkit-slider-thumb]:shadow-lg hover:[&::-webkit-slider-thumb]:scale-110 transition-all"
+                                                />
+                                                <p className="text-xs text-text-subtle leading-relaxed">Characters overlapping between adjacent chunks (rec. 10-20%) to maintain continuity.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </section>
+
+                            {/* Context Augmentation */}
+                            <section className="space-y-6">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 rounded-xl bg-surface border border-white/10 shadow-sm">
+                                        <Sparkles className="w-5 h-5 text-tertiary" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-white">Context Augmentation</h3>
+                                        <p className="text-xs text-text-subtle">Enhance vectors with generated metadata.</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <SelectionCard 
+                                        icon={Zap}
+                                        title="Standard Indexing"
+                                        description="Fast, direct indexing of chunks. Ideal for well-structured documents."
+                                        selected={augmentation === 'standard'}
+                                        onClick={() => setAugmentation('standard')}
+                                    />
+                                    <SelectionCard 
+                                        icon={Brain}
+                                        title="AI Context Enrichment"
+                                        description="Uses LLMs to generate hypothetical questions and summaries for every chunk, fixing 'lost context' in split documents."
+                                        selected={augmentation === 'enrichment'}
+                                        onClick={() => setAugmentation('enrichment')}
+                                    />
+                                </div>
+                            </section>
+
+                            {/* Performance Settings */}
+                            <section className="space-y-6">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 rounded-xl bg-surface border border-white/10 shadow-sm">
+                                        <Sliders className="w-5 h-5 text-purple-400" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-white">Performance Settings</h3>
+                                        <p className="text-xs text-text-subtle">Control ingestion speed and concurrency.</p>
+                                    </div>
+                                </div>
+                                <div className="p-8 bg-surface/30 backdrop-blur-md border border-white/5 rounded-2xl grid grid-cols-1 md:grid-cols-2 gap-10">
+                                    <div className="space-y-4">
+                                        <div className="flex justify-between items-center">
+                                            <label className="text-sm font-bold text-white">Ingestion Batch Size</label>
+                                            <span className="text-xs font-mono text-purple-400 bg-purple-500/10 px-3 py-1 rounded border border-purple-500/20">{batchSize}</span>
+                                        </div>
+                                        <input 
+                                            type="range" min="1" max="100" step="1"
+                                            value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))}
+                                            className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:shadow-lg hover:[&::-webkit-slider-thumb]:scale-110 transition-all"
+                                        />
+                                        <p className="text-xs text-text-subtle">Concurrent files processed during ingestion.</p>
+                                    </div>
+                                    <div className={`space-y-4 transition-opacity ${augmentation !== 'enrichment' ? 'opacity-50' : 'opacity-100'}`}>
+                                        <div className="flex justify-between items-center">
+                                            <label className="text-sm font-bold text-white">Context Batch Size</label>
+                                            <span className="text-xs font-mono text-purple-400 bg-purple-500/10 px-3 py-1 rounded border border-purple-500/20">{contextBatchSize}</span>
+                                        </div>
+                                        <input 
+                                            type="range" min="1" max="50" step="1"
+                                            value={contextBatchSize} onChange={(e) => setContextBatchSize(Number(e.target.value))}
+                                            disabled={augmentation !== 'enrichment'}
+                                            className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-purple-400 disabled:cursor-not-allowed [&::-webkit-slider-thumb]:shadow-lg hover:[&::-webkit-slider-thumb]:scale-110 transition-all"
+                                        />
+                                        <p className="text-xs text-text-subtle">Batch size for AI context enrichment generation.</p>
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* Destination & Indexing */}
+                            <section className="space-y-6">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 rounded-xl bg-surface border border-white/10 shadow-sm">
+                                        <Database className="w-5 h-5 text-blue-400" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-white">Destination & Indexing</h3>
+                                        <p className="text-xs text-text-subtle">Where your vectors will be stored.</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <SelectionCard 
+                                        icon={Database}
+                                        title="PostgreSQL (pgvector)"
+                                        description="Relational database with vector extension. Best for hybrid search."
+                                        selected={destination === 'postgres'}
+                                        onClick={() => setDestination('postgres')}
+                                    />
+                                    <SelectionCard 
+                                        icon={HardDrive}
+                                        title="Qdrant Vector DB"
+                                        description="High-performance vector similarity search engine."
+                                        selected={destination === 'qdrant'}
+                                        onClick={() => setDestination('qdrant')}
+                                        disabled={true}
+                                        badge="Temporarily unavailable."
+                                    />
+                                    <SelectionCard 
+                                        icon={Cloud}
+                                        title="Pinecone"
+                                        description="Managed vector database service."
+                                        selected={destination === 'pinecone'}
+                                        onClick={() => setDestination('pinecone')}
+                                        disabled={true}
+                                        badge="Temporarily unavailable."
+                                    />
+                                </div>
+                            </section>
+
                         </div>
                     )}
 
                 </div>
             </div>
-        </div>
+
+            {/* Footer */}
+            <div className="h-24 border-t border-white/5 bg-[#0A0A0F]/80 backdrop-blur-xl flex justify-between items-center px-8 shrink-0 z-20">
+                <div className="flex items-center gap-2">
+                     {step === 'settings' && (
+                         <div className="hidden md:flex items-center gap-2 text-xs font-bold text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded border border-emerald-500/20">
+                             <CheckCircle2 className="w-4 h-4" />
+                             <span>Configuration Validated</span>
+                         </div>
+                     )}
+                </div>
+                
+                <div className="flex gap-4">
+                    <Button 
+                        variant="outline" 
+                        onClick={() => {
+                            if (step === 'settings') setStep(sourceType === 'sharepoint' ? 'discovery' : 'local_select');
+                            else if (step === 'discovery' || step === 'local_select') setStep('source');
+                            else onClose();
+                        }} 
+                        disabled={isLoading}
+                        className="!h-12 !px-6 border-white/10 hover:bg-white/5 text-text-subtle hover:text-white"
+                    >
+                        {step === 'source' ? 'Cancel' : 'Back'}
+                    </Button>
+                    
+                    {step === 'settings' ? (
+                        <Button 
+                            variant="primary" 
+                            onClick={handleIngest} 
+                            disabled={isLoading}
+                            className="!h-12 !px-8 shadow-neon-primary disabled:opacity-50 text-sm"
+                        >
+                            {isLoading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <RefreshCw className="w-5 h-5 mr-2" />}
+                            {isLoading ? 'Processing...' : 'Start Ingestion Process'}
+                        </Button>
+                    ) : (
+                        (step === 'discovery' && discoveredFiles.length > 0) || (step === 'local_select' && localFiles.length > 0) ? (
+                            <Button 
+                                variant="primary" 
+                                onClick={proceedToSettings}
+                                className="!h-12 !px-8 shadow-neon-primary text-sm"
+                            >
+                                Continue <ChevronRight className="w-5 h-5 ml-2" />
+                            </Button>
+                        ) : null
+                    )}
+                </div>
+            </div>
+
+        </div>,
+        document.body
     );
-};
+}
+
+// --- MAIN COMPONENT ---
+// ... (rest of the file remains the same)
 
 interface NotebookDocumentsProps {
-    notebookId: string;
-    notebookName: string;
-    notebookDescription: string;
-    config: NotebookConfig;
+  notebookId: string;
+  notebookName: string;
+  notebookDescription?: string;
+  config: NotebookConfig;
 }
 
 const NotebookDocuments: React.FC<NotebookDocumentsProps> = ({ notebookId, notebookName, notebookDescription, config }) => {
-  const [viewMode, setViewMode] = useState<'list' | 'ingest'>('list');
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [isLoadingDocs, setIsLoadingDocs] = useState(false);
-  const [stats, setStats] = useState<{total: number, size: string}>({ total: 0, size: '0 MB' });
+    const [documents, setDocuments] = useState<Document[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
+    const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
+    const [selectedDetailDoc, setSelectedDetailDoc] = useState<Document | null>(null);
+    const [selectedErrorDoc, setSelectedErrorDoc] = useState<Document | null>(null);
 
-  const fetchDocuments = async () => {
-    setIsLoadingDocs(true);
-    try {
-        const response = await fetch(NOTEBOOK_STATUS_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ notebook_id: notebookId })
-        });
-
-        if (response.ok) {
-            const rawData = await response.json();
-            console.log("Raw Webhook Response:", rawData);
-
-            let filesList: any[] = [];
-            let statsData: any = {};
-
-            // Parsing Logic to handle n8n Variations
-            if (Array.isArray(rawData)) {
-                // Check if it's n8n style [{json: ...}, {json: ...}]
-                if (rawData.length > 0 && rawData[0].json) {
-                    const unwrapped = rawData.map((item: any) => item.json);
-                    
-                    // CASE 1: The array ITSELF is the list of files
-                    // Heuristic: check if the first item looks like a file (has id/name)
-                    if (unwrapped[0].id || unwrapped[0].file_id || unwrapped[0].name || unwrapped[0].file_name) {
-                        filesList = unwrapped;
-                    } 
-                    // CASE 2: It's a wrapped response like [{json: { files: [...] }}]
-                    else if (Array.isArray(unwrapped[0].files)) {
-                        filesList = unwrapped[0].files;
-                        if (unwrapped[0].stats) statsData = unwrapped[0].stats;
-                    }
-                    else if (Array.isArray(unwrapped[0].data)) {
-                        filesList = unwrapped[0].data;
-                         if (unwrapped[0].stats) statsData = unwrapped[0].stats;
-                    }
+    const fetchDocuments = async (isBackground = false) => {
+        if (!isBackground) setIsLoading(true);
+        try {
+            // Strict payload for user request
+            const response = await fetch(NOTEBOOK_STATUS_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notebook_id: notebookId })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                
+                // Handle different response structures (direct array, or n8n wrapped)
+                let rawData = [];
+                if (Array.isArray(data)) {
+                    rawData = data;
+                } else if (data.documents && Array.isArray(data.documents)) {
+                    rawData = data.documents;
+                } else if (data.data && Array.isArray(data.data)) {
+                    rawData = data.data;
                 } else {
-                    // Raw array [ {...}, {...} ]
-                    filesList = rawData;
+                     // Fallback for n8n wrapping if root is object but not array
+                     rawData = [data]; 
                 }
-            } else if (typeof rawData === 'object' && rawData !== null) {
-                // CASE 3: Single object { files: [...] } or { data: [...] }
-                if (Array.isArray(rawData.files)) {
-                    filesList = rawData.files;
-                    if (rawData.stats) statsData = rawData.stats;
-                }
-                else if (Array.isArray(rawData.data)) {
-                    filesList = rawData.data;
-                     if (rawData.stats) statsData = rawData.stats;
-                }
-                // CASE 4: Single object representing a list wrapper { results: [...] }
-                else if (Array.isArray(rawData.results)) {
-                    filesList = rawData.results;
-                     if (rawData.stats) statsData = rawData.stats;
-                }
-            }
-            
-            const mappedDocs: Document[] = filesList.map((f: any) => ({
-                id: f.id || f.file_id || Math.random().toString(36),
-                name: f.name || f.file_name || 'Untitled',
-                type: f.type || f.mime_type?.split('/').pop()?.toUpperCase() || 'UNKNOWN',
-                status: ((f.status === 'success' || f.status === 'completed') ? 'completed' : 
-                        (f.status === 'processing') ? 'processing' : 
-                        (f.status === 'failed' || f.status === 'error') ? 'error' : 'pending') as Document['status'],
-                size: f.size_formatted || f.size || '0 KB',
-                added: f.created_at ? new Date(f.created_at).toLocaleString() : 'Unknown'
-            }));
-            
-            setDocuments(mappedDocs);
-            
-            // Extract stats if available
-            if (Object.keys(statsData).length > 0) {
-                setStats({
-                    total: statsData.total_documents || mappedDocs.length,
-                    size: statsData.total_size || '0 MB'
+                
+                // Unwrap n8n json if present
+                rawData = rawData.map((item: any) => item.json ? item.json : item);
+
+                const mappedDocs: Document[] = rawData
+                    // Filter for items with a valid ID
+                    .filter((doc: any) => doc && (doc.job_id || doc.file_id || doc.notebook_id || doc.id))
+                    .map((doc: any) => {
+                        // Map status to frontend types
+                        let status: Document['status'] = 'completed';
+                        const s = (doc.status || '').toLowerCase();
+                        
+                        if (s === 'pending' || s === 'queued' || s === 'new') status = 'pending';
+                        else if (s === 'processing' || s === 'running' || s === 'ingesting') status = 'processing';
+                        else if (s === 'failed' || s === 'error') status = 'error';
+                        else if (s === 'finished' || s === 'completed' || s === 'success') status = 'completed';
+
+                        return {
+                            id: doc.job_id || doc.file_id || doc.id || Math.random().toString(36),
+                            jobId: doc.job_id || doc.jobId,
+                            fileId: doc.file_id || doc.fileId,
+                            name: doc.file_name || doc.name || doc.notebook_title || 'Untitled Document',
+                            type: 'text',
+                            status: status,
+                            size: 'Unknown',
+                            added: doc.created_at || new Date().toISOString(),
+                            updated: doc.updated_at,
+                            error: doc.error_description,
+                            retryCount: doc.retry_count,
+                            ingestionConfig: {
+                                method: doc.ingestion_method || 'Unknown',
+                                parser: doc.config_parser_mode || 'Standard',
+                                chunking: doc.config_chunking_mode || 'Recursive',
+                                chunkSize: doc.recursive_chunk_size,
+                                overlap: doc.recursive_chunk_overlap,
+                                augmentation: doc.config_enable_context_augmentation,
+                                destination: doc.config_destination || 'PostgreSQL'
+                            }
+                        };
+                    });
+                    
+                // Sort by updated time or creation time desc
+                mappedDocs.sort((a, b) => {
+                    const timeA = new Date(a.updated || a.added).getTime();
+                    const timeB = new Date(b.updated || b.added).getTime();
+                    return timeB - timeA;
                 });
+
+                setDocuments(mappedDocs);
             } else {
-                 setStats({
-                    total: mappedDocs.length,
-                    size: 'Unknown'
-                });
+                if (!isBackground) setDocuments([]);
             }
+        } catch (error) {
+            console.error("Failed to fetch documents", error);
+        } finally {
+            if (!isBackground) setIsLoading(false);
         }
-    } catch (e) {
-        console.error("Failed to fetch documents", e);
-    } finally {
-        setIsLoadingDocs(false);
-    }
-  };
+    };
 
-  useEffect(() => {
-    if (viewMode === 'list') {
-        fetchDocuments();
-    }
-  }, [notebookId, viewMode]);
+    useEffect(() => {
+        if (notebookId) {
+            fetchDocuments();
+        }
+    }, [notebookId]);
 
-  if (viewMode === 'ingest') {
-      return (
-          <div className="p-6 md:p-10 h-full">
-             <IngestPage 
-                onBack={() => setViewMode('list')} 
+    // Poll for updates if there are active jobs (pending/processing)
+    useEffect(() => {
+        const hasActiveJobs = documents.some(d => d.status === 'pending' || d.status === 'processing');
+        if (!hasActiveJobs) return;
+
+        const interval = setInterval(() => {
+            fetchDocuments(true);
+        }, 3000);
+
+        return () => clearInterval(interval);
+    }, [documents]);
+
+    const handleIngestionStarted = () => {
+        setIsLoading(true);
+        // Refresh immediately to show pending job, then continue polling via useEffect
+        setTimeout(() => fetchDocuments(), 1000); 
+    };
+
+    const handleDeleteFile = async (doc: Document, e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Log to verify click is capturing
+        console.log("🗑️ Delete Requested for:", doc.name, doc.id);
+
+        setDeletingFileId(doc.id);
+        
+        try {
+            const payload = {
+                notebook_id: notebookId,
+                file_id: doc.fileId || doc.id,
+                job_id: doc.jobId || doc.id,
+                orchestrator_id: ORCHESTRATOR_ID
+            };
+
+            console.log("📤 Sending delete payload:", payload);
+
+            const response = await fetch(DELETE_FILE_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.ok) {
+                // Remove from local state immediately
+                setDocuments(prev => prev.filter(d => d.id !== doc.id));
+                console.log("✅ File deleted successfully");
+            } else {
+                const text = await response.text();
+                console.error("Delete failed:", response.status, text);
+                alert("Failed to delete file. Server returned an error.");
+            }
+        } catch (error) {
+            console.error("Delete network error:", error);
+            alert("An error occurred while deleting the file.");
+        } finally {
+            setDeletingFileId(null);
+        }
+    };
+
+    const filteredDocs = documents.filter(doc => 
+        doc.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    return (
+        <div className="flex flex-col h-full bg-[#050508] relative overflow-hidden animate-fade-in">
+             <IngestionModal 
+                isOpen={isIngestModalOpen} 
+                onClose={() => setIsIngestModalOpen(false)} 
                 notebookId={notebookId}
                 notebookName={notebookName}
                 notebookDescription={notebookDescription}
-                notebookSettings={config}
+                config={config}
+                onIngestionStarted={handleIngestionStarted}
              />
-          </div>
-      );
-  }
 
-  return (
-    <div className="p-6 md:p-10 h-full flex flex-col">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-6 animate-fade-in-up">
-            <div>
-                <h2 className="text-2xl font-bold text-white">Documents</h2>
-                <p className="text-text-subtle text-sm mt-1">Manage and ingest knowledge base sources.</p>
-            </div>
+            <IngestionDetailsModal 
+                doc={selectedDetailDoc}
+                notebookId={notebookId}
+                onClose={() => setSelectedDetailDoc(null)}
+            />
             
-            <div className="flex items-center gap-3 w-full md:w-auto">
-                <div className="relative flex-1 md:w-64 group">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Search className="h-4 w-4 text-text-subtle group-focus-within:text-primary transition-colors" />
-                    </div>
-                    <input 
+            <ErrorDetailsModal
+                doc={selectedErrorDoc}
+                notebookId={notebookId}
+                onClose={() => setSelectedErrorDoc(null)}
+            />
+
+             {/* Header */}
+             <div className="p-8 pb-4 border-b border-white/5 bg-surface/50 backdrop-blur-md flex flex-col md:flex-row justify-between items-start md:items-center gap-4 z-20">
+                 <div>
+                     <div className="flex items-center gap-3 mb-1">
+                         <div className="p-2 rounded-lg bg-secondary/10 text-secondary border border-secondary/20">
+                             <Database className="w-5 h-5" />
+                         </div>
+                         <h1 className="text-2xl font-bold text-white tracking-tight">Documents</h1>
+                     </div>
+                     <p className="text-text-subtle text-sm max-w-2xl">{notebookDescription || 'Manage the knowledge source for this notebook.'}</p>
+                 </div>
+                 
+                 <div className="flex gap-3">
+                     <Button variant="outline" onClick={() => fetchDocuments(false)} className="!h-10 border-white/10 hover:bg-white/5 text-text-subtle">
+                         <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                     </Button>
+                     <Button 
+                        variant="primary" 
+                        onClick={() => setIsIngestModalOpen(true)}
+                        className="!h-10 !px-4 shadow-neon-primary text-xs flex items-center gap-2"
+                     >
+                         <Plus className="w-4 h-4" /> Add New File
+                     </Button>
+                 </div>
+             </div>
+             
+             {/* Toolbar */}
+             <div className="px-8 py-4 border-b border-white/5 bg-surface/30 flex justify-between items-center z-10">
+                 <div className="relative group w-64">
+                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-subtle group-focus-within:text-white transition-colors" />
+                     <input 
                         type="text" 
                         placeholder="Search files..." 
-                        className="w-full bg-surface border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 transition-all shadow-sm"
-                    />
-                </div>
-                
-                <Button 
-                    variant="outline" 
-                    className="!h-[42px] !px-3 border-white/10 hover:bg-white/5"
-                    onClick={fetchDocuments}
-                    title="Refresh List"
-                    disabled={isLoadingDocs}
-                >
-                    <RefreshCw className={`w-4 h-4 ${isLoadingDocs ? 'animate-spin' : ''}`} />
-                </Button>
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full bg-[#0A0A0F] border border-white/10 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-primary/50 transition-colors"
+                     />
+                 </div>
+                 
+                 <div className="flex bg-[#0A0A0F] rounded-lg p-1 border border-white/10">
+                     <button 
+                        onClick={() => setViewMode('list')}
+                        className={`p-1.5 rounded-md transition-all ${viewMode === 'list' ? 'bg-white/10 text-white shadow-sm' : 'text-text-subtle hover:text-white'}`}
+                     >
+                         <ListIcon className="w-4 h-4" />
+                     </button>
+                     <button 
+                        onClick={() => setViewMode('grid')}
+                        className={`p-1.5 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white/10 text-white shadow-sm' : 'text-text-subtle hover:text-white'}`}
+                     >
+                         <LayoutGrid className="w-4 h-4" />
+                     </button>
+                 </div>
+             </div>
 
-                <Button 
-                    variant="primary" 
-                    className="!h-[42px] !px-4 md:!px-6 whitespace-nowrap shadow-neon-primary hover:scale-[1.02] active:scale-[0.98] transition-transform"
-                    onClick={() => setViewMode('ingest')}
-                >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Ingest Documents
-                </Button>
-            </div>
-        </div>
-
-        {/* Table Container */}
-        <div className="flex-1 bg-[#0E0E12] border border-white/10 rounded-2xl overflow-hidden flex flex-col shadow-2xl animate-fade-in-up relative" style={{ animationDelay: '0.1s' }}>
-            {/* Gloss Highlight */}
-            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
-
-            <div className="overflow-auto custom-scrollbar flex-1 relative">
-                {isLoadingDocs && documents.length === 0 && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0E0E12]/80 backdrop-blur-sm z-20">
-                        <Loader2 className="w-8 h-8 text-primary animate-spin mb-2" />
-                        <span className="text-xs text-text-subtle">Loading documents...</span>
-                    </div>
-                )}
-                
-                {!isLoadingDocs && documents.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-text-subtle opacity-50 p-8">
-                        <FolderOpen className="w-12 h-12 mb-4 stroke-1" />
-                        <p className="text-sm font-bold">No Documents Found</p>
-                        <p className="text-xs mt-1">Ingest content to populate this notebook.</p>
-                    </div>
-                ) : (
-                    <table className="w-full text-left border-collapse">
-                        <thead className="bg-white/[0.02] border-b border-white/5 sticky top-0 backdrop-blur-md z-10">
-                            <tr>
-                                <th className="py-4 px-6 text-[11px] font-bold text-text-subtle/70 uppercase tracking-wider">File Name</th>
-                                <th className="py-4 px-6 text-[11px] font-bold text-text-subtle/70 uppercase tracking-wider">Status</th>
-                                <th className="py-4 px-6 text-[11px] font-bold text-text-subtle/70 uppercase tracking-wider">Type</th>
-                                <th className="py-4 px-6 text-[11px] font-bold text-text-subtle/70 uppercase tracking-wider text-right">Size</th>
-                                <th className="py-4 px-6 text-[11px] font-bold text-text-subtle/70 uppercase tracking-wider text-right">Added</th>
-                                <th className="py-4 px-6 w-10"></th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/[0.03]">
-                            {documents.map((doc) => (
-                                <tr key={doc.id} className="hover:bg-white/[0.02] transition-colors group cursor-pointer">
-                                    <td className="py-4 px-6">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/5 flex items-center justify-center text-primary group-hover:border-primary/30 group-hover:bg-primary/10 transition-colors">
-                                                <FileText className="w-4 h-4" />
-                                            </div>
-                                            <span className="text-sm font-medium text-white group-hover:text-primary transition-colors line-clamp-1">{doc.name}</span>
-                                        </div>
-                                    </td>
-                                    <td className="py-4 px-6">
-                                        <StatusBadge status={doc.status} />
-                                    </td>
-                                    <td className="py-4 px-6">
-                                        <span className="text-xs font-mono text-text-subtle bg-white/5 border border-white/10 px-2 py-1 rounded-md">{doc.type}</span>
-                                    </td>
-                                    <td className="py-4 px-6 text-right text-sm text-text-subtle font-mono">{doc.size}</td>
-                                    <td className="py-4 px-6 text-right text-sm text-text-subtle">{doc.added}</td>
-                                    <td className="py-4 px-6 text-center">
-                                        <button className="text-text-subtle hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-white/5 rounded-lg">
-                                            <MoreVertical className="w-4 h-4" />
+             {/* Content */}
+             <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+                 {isLoading && documents.length === 0 ? (
+                     <div className="flex flex-col items-center justify-center h-64 text-text-subtle">
+                         <Loader2 className="w-8 h-8 animate-spin mb-4 text-primary" />
+                         <p>Loading documents...</p>
+                     </div>
+                 ) : filteredDocs.length === 0 ? (
+                     <div className="flex flex-col items-center justify-center h-64 text-text-subtle border border-dashed border-white/10 rounded-2xl bg-surface/20">
+                         <FolderOpen className="w-12 h-12 mb-4 opacity-50" />
+                         <p>No documents found.</p>
+                         {searchQuery && <p className="text-xs mt-2">Try adjusting your search query.</p>}
+                     </div>
+                 ) : viewMode === 'list' ? (
+                     <div className="space-y-3">
+                         {filteredDocs.map((doc) => (
+                             <div 
+                                key={doc.id} 
+                                onClick={() => doc.status === 'error' ? setSelectedErrorDoc(doc) : setSelectedDetailDoc(doc)}
+                                className="group relative flex items-center justify-between p-4 rounded-xl bg-[#0E0E12] border border-white/5 hover:border-white/10 hover:bg-[#121216] transition-all duration-300 shadow-sm hover:shadow-md cursor-pointer"
+                             >
+                                 <div className="flex items-center gap-4">
+                                     <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-text-subtle group-hover:text-primary transition-colors border border-white/5 group-hover:border-primary/20">
+                                         <FileText className="w-5 h-5" />
+                                     </div>
+                                     <div>
+                                         <h3 className="text-sm font-bold text-white group-hover:text-primary transition-colors">{doc.name}</h3>
+                                         <div className="flex items-center gap-2 text-xs text-text-subtle mt-1">
+                                             <span className="font-mono opacity-50 bg-black/30 px-1.5 rounded text-[10px]">{doc.jobId ? `Job: ${doc.jobId.slice(0,8)}` : 'ID: N/A'}</span>
+                                             <span className="w-1 h-1 rounded-full bg-white/20"></span>
+                                             <span>{new Date(doc.updated || doc.added).toLocaleString()}</span>
+                                         </div>
+                                     </div>
+                                 </div>
+                                 <div className="flex items-center gap-4">
+                                     <StatusBadge status={doc.status} error={doc.error} />
+                                     <div className="h-6 w-px bg-white/5"></div>
+                                     <div className="flex items-center gap-1">
+                                        <button 
+                                            type="button"
+                                            onClick={(e) => handleDeleteFile(doc, e)}
+                                            disabled={deletingFileId === doc.id}
+                                            className="p-2 rounded-lg text-text-subtle hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50 cursor-pointer relative z-50"
+                                            title="Delete File"
+                                        >
+                                            {deletingFileId === doc.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                                         </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                )}
-            </div>
-            
-            {/* Footer Stats */}
-            <div className="px-6 py-3 bg-[#0A0A0F] border-t border-white/5 flex justify-between items-center text-xs text-text-subtle">
-                <div className="flex items-center gap-4">
-                    <span>Total Documents: <span className="text-white font-bold">{stats.total}</span></span>
-                    <span className="w-px h-3 bg-white/10"></span>
-                    <span>Total Size: <span className="text-white font-bold">{stats.size}</span></span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                    <span className="opacity-80">System Operational</span>
-                </div>
-            </div>
+                                        <button 
+                                            type="button" 
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                doc.status === 'error' ? setSelectedErrorDoc(doc) : setSelectedDetailDoc(doc);
+                                            }}
+                                            className={`p-2 rounded-lg transition-colors opacity-0 group-hover:opacity-100 ${doc.status === 'error' ? 'text-red-400 hover:bg-red-500/10 hover:text-red-300' : 'text-text-subtle hover:text-white hover:bg-white/10'}`}
+                                            title={doc.status === 'error' ? undefined : "View Ingestion Details"}
+                                        >
+                                            {doc.status === 'error' ? <AlertTriangle className="w-4 h-4" /> : <Info className="w-4 h-4" />}
+                                        </button>
+                                     </div>
+                                 </div>
+                             </div>
+                         ))}
+                     </div>
+                 ) : (
+                     <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                         {filteredDocs.map((doc) => (
+                             <div 
+                                key={doc.id} 
+                                onClick={() => doc.status === 'error' ? setSelectedErrorDoc(doc) : setSelectedDetailDoc(doc)}
+                                className="group p-5 rounded-xl bg-[#0E0E12] border border-white/5 hover:border-white/10 hover:bg-[#121216] transition-all flex flex-col justify-between aspect-square relative shadow-sm hover:shadow-md cursor-pointer"
+                             >
+                                 <div className="flex justify-between items-start">
+                                     <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-text-subtle group-hover:text-primary transition-colors border border-white/5 group-hover:border-primary/20">
+                                         <FileText className="w-5 h-5" />
+                                     </div>
+                                     <StatusBadge status={doc.status} error={doc.error} />
+                                 </div>
+                                 <div>
+                                     <h3 className="text-sm font-bold text-white group-hover:text-primary transition-colors line-clamp-2 mb-1">{doc.name}</h3>
+                                     <p className="text-xs text-text-subtle font-mono opacity-60">{new Date(doc.added).toLocaleDateString()}</p>
+                                 </div>
+                                 
+                                 {/* Hover Actions */}
+                                 <div className="absolute top-4 right-14 opacity-0 group-hover:opacity-100 transition-opacity z-50 flex gap-1">
+                                      <button 
+                                        type="button" 
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            doc.status === 'error' ? setSelectedErrorDoc(doc) : setSelectedDetailDoc(doc);
+                                        }}
+                                        className={`p-1.5 rounded bg-surface border border-white/10 transition-colors cursor-pointer ${doc.status === 'error' ? 'text-red-400 hover:bg-red-500/10' : 'text-text-subtle hover:bg-white/10 hover:text-white'}`}
+                                        title={doc.status === 'error' ? undefined : "View Details"}
+                                      >
+                                          {doc.status === 'error' ? <AlertTriangle className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
+                                      </button>
+                                      <button 
+                                        type="button"
+                                        onClick={(e) => handleDeleteFile(doc, e)}
+                                        disabled={deletingFileId === doc.id}
+                                        className="p-1.5 rounded bg-surface border border-white/10 hover:bg-red-500/10 hover:text-red-400 text-text-subtle transition-colors cursor-pointer disabled:opacity-50"
+                                      >
+                                          {deletingFileId === doc.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                                      </button>
+                                 </div>
+                             </div>
+                         ))}
+                     </div>
+                 )}
+             </div>
         </div>
-    </div>
-  );
+    );
 };
 
 export default NotebookDocuments;
